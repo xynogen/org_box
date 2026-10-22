@@ -1,7 +1,7 @@
 """Geometry generation only. Run with FreeCAD: Macro > Macros > Execute.
 Edit the dimensions below, then rerun. Each run creates a new document.
 Local check without FreeCAD: python cad/organizer_a1mini.FCMacro --check
-Outputs: organizer_a1mini.FCStd and separate print-oriented STL files.
+Outputs: root-level FCStd models and print-oriented files in stl/.
 """
 from pathlib import Path
 import math
@@ -431,6 +431,7 @@ def build():
     save()
 
     # Export separate parts in printing orientation; no pin models are needed.
+    (OUTPUT / 'stl').mkdir(exist_ok=True)
     for owner in print_parts:
         rotation = (App.Rotation(V(1, 0, 0), 180) if owner == lid else
                     App.Rotation(V(0, 1, 0), -90) if owner == latch else App.Rotation())
@@ -439,7 +440,7 @@ def build():
         mesh.transform(App.Placement(V(0, 0, 0), rotation).toMatrix())
         bb = mesh.BoundBox
         mesh.translate(-bb.XMin, -bb.YMin, -bb.ZMin)
-        mesh.write(str(OUTPUT / f'organizer_a1mini_{owner.Name.lower()}.stl'))
+        mesh.write(str(OUTPUT / 'stl' / f'organizer_a1mini_{owner.Name.lower()}.stl'))
     clip_doc.recompute()
     clip_doc.saveAs(str(OUTPUT / 'cable_clipper.FCStd'))
     save()

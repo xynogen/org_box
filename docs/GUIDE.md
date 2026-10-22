@@ -2,7 +2,7 @@
 
 ## 1. Cetak test kunci
 
-Gunakan `test_snap_lock_base.stl`, `test_snap_lock_lid.stl`, dan `test_snap_lock_latch.stl` di root proyek. Semua memakai geometri yang sama dengan produk, dipotong menjadi sampel kecil. Cetak **100%**, bukan scale-to-fit.
+Gunakan [sampel badan](../stl/test_snap_lock_base.stl), [sampel poros](../stl/test_snap_lock_lid.stl), dan [kait](../stl/test_snap_lock_latch.stl) di folder `stl/`. Semua memakai geometri yang sama dengan produk, dipotong menjadi sampel kecil. Cetak **100%**, bukan scale-to-fit.
 
 Pengaturan awal untuk PLA dan nozzle 0,4 mm:
 
@@ -67,7 +67,8 @@ scripts/
 docs/
   GUIDE.md
   images/                    # Gambar hasil render
-*.FCStd, *.stl               # Output siap dibuka / dicetak
+stl/                        # Semua STL siap cetak
+*.FCStd                     # Model CAD di root
 ```
 
 Urutan di FreeCAD GUI:
@@ -76,7 +77,7 @@ Urutan di FreeCAD GUI:
 2. Jalankan `cad/test_snap_lock.FCMacro`.
 3. Bila ingin memperbarui README, jalankan `scripts/render_docs.FCMacro`.
 
-Model yang dihasilkan disimpan dalam posisi tertutup. Skrip dokumentasi hanya membuka salinan untuk gambar tutup terbuka/tertutup; kode CAD tidak bergantung pada kode dokumentasi. Output selalu masuk root proyek, bukan current working directory. Simpan edit manual dengan nama lain sebelum regenerasi.
+Model yang dihasilkan disimpan dalam posisi tertutup. Skrip dokumentasi hanya membuka salinan untuk gambar tutup terbuka/tertutup; kode CAD tidak bergantung pada kode dokumentasi. Output FCStd masuk root proyek, STL masuk `stl/`, bukan current working directory. Simpan edit manual dengan nama lain sebelum regenerasi.
 
 Cek sederhana tanpa FreeCAD:
 

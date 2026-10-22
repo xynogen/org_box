@@ -11,6 +11,7 @@ import Sketcher
 import MeshPart
 
 ROOT = Path(__file__).resolve().parents[1]
+(ROOT / 'stl').mkdir(exist_ok=True)
 old_args = sys.argv[:]
 try:
     sys.argv = [str(ROOT / 'cad' / 'organizer_a1mini.FCMacro'), '--check']
@@ -90,7 +91,7 @@ for owner, name, rotation in zip(parts, ('base', 'lid', 'latch'),
     bb = mesh.BoundBox
     mesh.translate(-bb.XMin, -bb.YMin, -bb.ZMin)
     assert mesh.isSolid(), f'{name}: STL not watertight'
-    mesh.write(str(ROOT / f'test_snap_lock_{name}.stl'))
+    mesh.write(str(ROOT / 'stl' / f'test_snap_lock_{name}.stl'))
     print(f'{name}: {bb.XLength:.1f} x {bb.YLength:.1f} x {bb.ZLength:.1f} mm')
 
 doc.recompute()
