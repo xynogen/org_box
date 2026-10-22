@@ -1,0 +1,65 @@
+"""Documentation only: read generated FCStd files and write docs/images.
+Run in the FreeCAD GUI after cad/organizer_a1mini.FCMacro.
+Never saves or overwrites the generated CAD models.
+"""
+from pathlib import Path
+import shutil
+import tempfile
+import FreeCAD as App
+import FreeCADGui as Gui
+
+ROOT = Path(__file__).resolve().parents[1]
+IMAGES = ROOT / 'docs' / 'images'
+IMAGES.mkdir(parents=True, exist_ok=True)
+assert App.GuiUp, 'Rendering requires the FreeCAD GUI.'
+previous_name = App.ActiveDocument.Name if App.ActiveDocument else None
+# Use a fresh document so manual edits in an open document are not rendered or changed.
+temporary = tempfile.TemporaryDirectory(prefix='org-box-render-')
+source = Path(temporary.name) / 'render.FCStd'
+shutil.copy2(ROOT / 'organizer_a1mini.FCStd', source)
+doc = App.openDocument(str(source))
+placements = {name: doc.getObject(name).Placement for name in ('Lid', 'Latch')}
+try:
+    for owner in doc.Objects:
+        if owner.TypeId != 'PartDesign::Body':
+            continue
+        for item in owner.Group:
+            if hasattr(item, 'Visibility'):
+                item.Visibility = item == owner.Tip
+        owner.Visibility = True
+        for visual in (owner.ViewObject, owner.Tip.ViewObject):
+            visual.ShapeColor = (0.65, 0.65, 0.65)
+            visual.LineColor = (0.18, 0.18, 0.18)
+            visual.DisplayMode = 'Flat Lines'
+    App.setActiveDocument(doc.Name)
+    view = Gui.activeDocument().activeView()
+    Gui.Selection.clearSelection()
+    hinge = doc.getObject('BasePinBoreProfile')
+    center = hinge.Geometry[0].Center
+    axis = hinge.Placement.multVec(center)
+    opening = App.Placement(App.Vector(), App.Rotation(App.Vector(1, 0, 0), -110), axis)
+    for name in placements:
+        doc.getObject(name).Placement = opening
+    doc.recompute()
+    view.viewAxonometric()
+    view.fitAll()
+    view.saveImage(str(IMAGES / 'organizer-open.png'), 1400, 1050, 'White')
+    view.viewTop()
+    view.fitAll()
+    view.saveImage(str(IMAGES / 'bento-top.png'), 1400, 1050, 'White')
+    for name in placements:
+        doc.getObject(name).Placement = App.Placement()
+    doc.recompute()
+    view.viewAxonometric()
+    view.fitAll()
+    view.saveImage(str(IMAGES / 'organizer-closed.png'), 1400, 1050, 'White')
+    for name in ('organizer-open.png', 'bento-top.png', 'organizer-closed.png'):
+        assert (IMAGES / name).stat().st_size > 1000, name
+    print('PASS: three documentation renders written; CAD files unchanged.')
+finally:
+    for name, placement in placements.items():
+        doc.getObject(name).Placement = placement
+    App.closeDocument(doc.Name)
+    temporary.cleanup()
+    if previous_name in App.listDocuments():
+        App.setActiveDocument(previous_name)

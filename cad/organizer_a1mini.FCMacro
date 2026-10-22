@@ -1,0 +1,459 @@
+"""Geometry generation only. Run with FreeCAD: Macro > Macros > Execute.
+Edit the dimensions below, then rerun. Each run creates a new document.
+Local check without FreeCAD: python cad/organizer_a1mini.FCMacro --check
+Outputs: organizer_a1mini.FCStd and separate print-oriented STL files.
+"""
+from pathlib import Path
+import math
+import sys
+
+# Dimensions in mm. Outer length includes room for a 3 mm brim on A1 Mini.
+LENGTH = 170.0
+WIDTH = 115.5
+HEIGHT = 50.0
+WALL = 3.0
+FLOOR = 3.0
+LID_THICKNESS = 3.6
+TOOL_WIDTH = 32.6
+TOOL_LENGTH = 70.0
+TOOL_THICKNESS = 15.0  # Initial assumption: measure the real tool before printing.
+TOOL_CLEARANCE = 0.4  # Clearance on each side.
+PIN_DIAMETER = 1.75
+PIN_HOLE = 2.1  # Calibration knob: adjust after a small printer-fit test.
+HINGE_RADIUS = 4.0
+HINGE_SPAN = 150.0
+HINGE_GAP = 0.5
+HINGE_SEGMENT = (HINGE_SPAN-4*HINGE_GAP)/5
+HINGE_STARTS = tuple(-HINGE_SPAN/2+i*(HINGE_SEGMENT+HINGE_GAP) for i in range(5))
+ASSEMBLY_GAP = 0.4
+BRIM = 3.0
+TRAY_GAP = 0.5  # Removable bento trays: clearance to shell and to each other.
+TRAY_WALL = 2.4
+TRAY_HEIGHT = 43.0
+SNAP_PIVOT_CLEARANCE = 0.2  # Radial fit of the clip around the lid's integral axle.
+SNAP_MOUTH = 2.6  # 3 mm axle snaps through this mouth; test clip in PLA first.
+CATCH_GAP = 0.05  # Resting hook-to-bead gap; snap deflection is checked below.
+CABLE_DIAMETER = 5.0  # Measure the cable jacket, not its connector.
+CABLE_CLEARANCE = 0.2  # Radial clearance inside each channel.
+CABLE_MOUTH = 4.6  # Small jacket compression; PLA is not a flexible spring.
+CABLE_CLIP_HEIGHT = 8.0
+BOTTOM_CHAMFER = 0.8  # 45-degree bottom edge; leaves the center flat for printing.
+RIM_FILLET = 0.6  # Small enough to preserve the 2.4 mm tray walls.
+STACK_CLEARANCE = 0.35  # Per side between the locating rib and bottom groove.
+STACK_RIB_HEIGHT = 0.8
+STACK_GROOVE_DEPTH = 1.0
+STACK_RIB_WIDTH = 2.0
+OUTPUT = Path(__file__).resolve().parents[1]
+
+
+def check_dimensions():
+    assert 0 < PIN_DIAMETER < PIN_HOLE < 2 * HINGE_RADIUS
+    assert WALL >= 3 and FLOOR >= 3 and HEIGHT >= 40
+    assert LENGTH + 2 * BRIM <= 180
+    assert WIDTH + 4 * HINGE_RADIUS + 2 * BRIM <= 180
+    assert LID_THICKNESS + ASSEMBLY_GAP >= HINGE_RADIUS
+    assert TOOL_WIDTH + 2 * TOOL_CLEARANCE + 6 < 48
+    assert TOOL_LENGTH + 2 * TOOL_CLEARANCE + 6 < 77
+    assert TOOL_THICKNESS + 4 < HEIGHT
+    assert LENGTH >= 170 and WIDTH >= 115.5, 'Modular layout needs at least 170 x 115.5 mm.'
+    assert 0.2 <= TRAY_GAP <= 1 and 0.15 <= SNAP_PIVOT_CLEARANCE <= 0.35
+    assert 2.5 <= SNAP_MOUTH < 3 and 0.02 <= CATCH_GAP <= 0.1
+    assert FLOOR + TRAY_GAP + TRAY_HEIGHT < HEIGHT - 2
+    assert 0 < BOTTOM_CHAMFER < min(FLOOR, TRAY_WALL)/2
+    assert 0 < RIM_FILLET < min(WALL, TRAY_WALL, LID_THICKNESS)/2
+    assert 0.2 <= STACK_CLEARANCE <= 0.5
+    assert 0 < STACK_RIB_HEIGHT < STACK_GROOVE_DEPTH <= FLOOR-2
+    assert STACK_RIB_WIDTH >= 2
+    short = (LENGTH - 2*WALL - 4*TRAY_GAP) / 3
+    long = 2*short + TRAY_GAP
+    assert math.isclose(WIDTH-2*WALL, long+2*TRAY_GAP, abs_tol=1e-6)
+    assert short > TOOL_WIDTH + 2*TOOL_CLEARANCE + 12
+    assert long > TOOL_LENGTH + 2*TOOL_CLEARANCE + 12
+    assert 3 <= CABLE_DIAMETER <= 6
+    assert CABLE_DIAMETER-0.6 <= CABLE_MOUTH < CABLE_DIAMETER
+    assert 0.15 <= CABLE_CLEARANCE <= 0.4 and 6 <= CABLE_CLIP_HEIGHT <= 12
+    assert CABLE_DIAMETER+2*CABLE_CLEARANCE < 9.2
+    cradle_length = TOOL_LENGTH + 2*TOOL_CLEARANCE + 6
+    tray_inner_length = long - 2*TRAY_WALL
+    assert tray_inner_length - cradle_length > 20  # One continuous free area.
+    # Base knuckles and lid knuckles alternate with 0.5 mm axial clearance.
+    assert HINGE_SPAN <= LENGTH-20 and HINGE_GAP >= 0.5
+    knuckles = [(start, start+HINGE_SEGMENT) for start in HINGE_STARTS]
+    assert all(math.isclose(end-start, HINGE_SEGMENT) for start, end in knuckles)
+    assert all(math.isclose(b[0]-a[1], HINGE_GAP) for a, b in zip(knuckles, knuckles[1:]))
+
+
+def build():
+    import FreeCAD as App
+    import Part
+    import Sketcher
+    import MeshPart
+
+    check_dimensions()
+    doc = App.newDocument('Organizer_A1Mini')
+    doc.Label = f'Organizer PLA {LENGTH:g} x {WIDTH:g} x {HEIGHT:g} — A1 Mini'
+    V = App.Vector
+    half_w = WIDTH / 2
+    hinge_y = half_w + HINGE_RADIUS
+    axis_z = HEIGHT
+    lid_bottom = HEIGHT + ASSEMBLY_GAP
+    sketches = []
+
+    def sketch(owner, name, z=0, x=None):
+        s = doc.addObject('Sketcher::SketchObject', name)
+        owner.addObject(s)
+        if x is None:
+            s.Placement = App.Placement(V(0, 0, z), App.Rotation())
+        else:
+            # Local sketch X/Y become world Y/Z; normal becomes world X.
+            rotation = App.Rotation(V(0, 1, 0), V(0, 0, 1), V(1, 0, 0), 'ZXY')
+            s.Placement = App.Placement(V(x, 0, 0), rotation)
+        sketches.append(s)
+        return s
+
+    def fixed(s, geometry):
+        i = s.addGeometry(geometry, False)
+        s.addConstraint(Sketcher.Constraint('Block', i))
+
+    def polygon(s, points):
+        for a, b in zip(points, points[1:] + points[:1]):
+            fixed(s, Part.LineSegment(V(*a, 0), V(*b, 0)))
+
+    def rectangle(s, w, h, x=0, y=0):
+        polygon(s, [(x-w/2, y-h/2), (x+w/2, y-h/2),
+                    (x+w/2, y+h/2), (x-w/2, y+h/2)])
+
+    def rounded_rectangle(s, w, h, radius, x=0, y=0):
+        left, right = x-w/2, x+w/2
+        bottom, top = y-h/2, y+h/2
+        r = radius
+        for a, b in [((left+r, bottom), (right-r, bottom)),
+                     ((right, bottom+r), (right, top-r)),
+                     ((right-r, top), (left+r, top)),
+                     ((left, top-r), (left, bottom+r))]:
+            fixed(s, Part.LineSegment(V(*a, 0), V(*b, 0)))
+        for cx, cy, angle in [(right-r, bottom+r, -90), (right-r, top-r, 0),
+                              (left+r, top-r, 90), (left+r, bottom+r, 180)]:
+            fixed(s, Part.ArcOfCircle(Part.Circle(V(cx, cy, 0), V(0, 0, 1), r),
+                                      math.radians(angle), math.radians(angle+90)))
+
+    def circle(s, diameter, x, y):
+        fixed(s, Part.Circle(V(x, y, 0), V(0, 0, 1), diameter/2))
+
+    def feature(owner, s, length, name, cut=False, reversed=False):
+        doc.recompute()
+        assert s.FullyConstrained, f'{s.Name}: unconstrained sketch'
+        previous = owner.Tip
+        f = owner.newObject('PartDesign::Pocket' if cut else 'PartDesign::Pad', name)
+        f.Profile = s
+        f.Length = length
+        f.Reversed = reversed
+        doc.recompute()
+        assert not f.Shape.isNull(), f'{name}: empty shape ({f.getStatusString()})'
+        assert f.Shape.isValid() and len(f.Shape.Solids) == 1, f'{name}: invalid/disconnected solid'
+        s.Visibility = False
+        if previous and previous != s:
+            previous.Visibility = False
+        f.Visibility = True
+        return f
+
+    def dress_edges(owner, kind, z, size, name):
+        previous = owner.Tip
+        edges = [f'Edge{i+1}' for i, e in enumerate(previous.Shape.Edges)
+                 if abs(e.BoundBox.ZMin-z) < 1e-6 and abs(e.BoundBox.ZMax-z) < 1e-6]
+        assert edges, f'{name}: no planar perimeter edges at z={z:g}'
+        f = owner.newObject('PartDesign::'+kind, name)
+        f.Base = (previous, edges)
+        if kind == 'Chamfer':
+            f.Size = size
+        else:
+            f.Radius = size
+        doc.recompute()
+        assert not f.Shape.isNull(), f'{name}: {f.getStatusString()}'
+        assert f.Shape.isValid() and len(f.Shape.Solids) == 1, f'{name}: invalid solid'
+        assert 0 < f.Shape.Volume < previous.Shape.Volume, f'{name}: expected edge material removal'
+        previous.Visibility = False
+        f.Visibility = True
+        return f
+
+    def save():
+        doc.recompute()
+        doc.saveAs(str(OUTPUT / 'organizer_a1mini.FCStd'))
+
+    base = doc.addObject('PartDesign::Body', 'Base')
+    base.Label = '01 Base — tool, cables, accessories'
+    s = sketch(base, 'OuterFootprint')
+    rounded_rectangle(s, LENGTH, WIDTH, 8)
+    feature(base, s, HEIGHT, 'OuterPad')
+    s = sketch(base, 'InnerFootprint', z=HEIGHT)
+    rounded_rectangle(s, LENGTH-2*WALL, WIDTH-2*WALL, 5)
+    feature(base, s, HEIGHT-FLOOR, 'Cavity', cut=True)
+    dress_edges(base, 'Chamfer', 0, BOTTOM_CHAMFER, 'BaseBottomChamfer')
+    dress_edges(base, 'Fillet', HEIGHT, RIM_FILLET, 'BaseRimFillet')
+    # Shallow underside groove leaves a flat load-bearing base and >=2 mm floor.
+    s = sketch(base, 'StackBottomGrooveProfile')
+    rounded_rectangle(s, LENGTH-12+2*STACK_CLEARANCE, WIDTH-12+2*STACK_CLEARANCE, 6+STACK_CLEARANCE)
+    rounded_rectangle(s, LENGTH-12-2*STACK_RIB_WIDTH-2*STACK_CLEARANCE,
+                      WIDTH-12-2*STACK_RIB_WIDTH-2*STACK_CLEARANCE,
+                      6-STACK_RIB_WIDTH-STACK_CLEARANCE)
+    feature(base, s, STACK_GROOVE_DEPTH, 'StackBottomGroove', cut=True, reversed=True)
+    # 45-degree hinge roots avoid a thin unsupported ledge at the back.
+    for n, start in enumerate(HINGE_STARTS[::2], 1):
+        s = sketch(base, f'BaseHingeRootProfile{n}', x=start)
+        polygon(s, [(half_w-3, HEIGHT-12), (half_w, HEIGHT-12),
+                    (half_w+8, HEIGHT-4), (half_w+8, HEIGHT), (half_w-3, HEIGHT)])
+        feature(base, s, HINGE_SEGMENT, f'BaseHingeRoot{n}')
+        s = sketch(base, f'BaseKnuckleProfile{n}', x=start)
+        circle(s, 2*HINGE_RADIUS, hinge_y, axis_z)
+        feature(base, s, HINGE_SEGMENT, f'BaseKnuckle{n}')
+    s = sketch(base, 'BasePinBoreProfile', x=-80)
+    circle(s, PIN_HOLE, hinge_y, axis_z)
+    feature(base, s, 160, 'BaseFilamentBore', cut=True, reversed=True)
+    # Clear the central rim for a compact snap-on pivot clip.
+    s = sketch(base, 'LatchSwingReliefProfile', z=HEIGHT)
+    rectangle(s, 36, 10, y=-half_w)
+    feature(base, s, 10, 'LatchSwingRelief', cut=True)
+    s = sketch(base, 'CatchRootProfile', x=-12)
+    polygon(s, [(-half_w+1, HEIGHT-20), (-half_w, HEIGHT-20),
+                (-half_w-3.5, HEIGHT-19.5), (-half_w-3.5, HEIGHT-18),
+                (-half_w+1, HEIGHT-18)])
+    feature(base, s, 24, 'CatchRoot')
+    s = sketch(base, 'CatchBeadProfile', x=-12)
+    circle(s, 3.2, -half_w-3.5, HEIGHT-19)
+    feature(base, s, 24, 'CatchBead')
+    save()
+
+    lid = doc.addObject('PartDesign::Body', 'Lid')
+    lid.Label = '02 Lid — filament-pin hinge'
+    s = sketch(lid, 'LidFootprint', z=lid_bottom)
+    rounded_rectangle(s, LENGTH, WIDTH, 8)
+    feature(lid, s, LID_THICKNESS, 'LidPlate')
+    dress_edges(lid, 'Fillet', lid_bottom+LID_THICKNESS, RIM_FILLET, 'LidOuterFillet')
+    # Continuous locating rib enters the next box's underside groove.
+    s = sketch(lid, 'StackTopRibProfile', z=lid_bottom+LID_THICKNESS)
+    rounded_rectangle(s, LENGTH-12, WIDTH-12, 6)
+    rounded_rectangle(s, LENGTH-12-2*STACK_RIB_WIDTH, WIDTH-12-2*STACK_RIB_WIDTH, 6-STACK_RIB_WIDTH)
+    feature(lid, s, STACK_RIB_HEIGHT, 'StackTopRib')
+    s = sketch(lid, 'AlignmentLipProfile', z=lid_bottom)
+    rounded_rectangle(s, LENGTH-2*WALL-0.8, WIDTH-2*WALL-0.8, 4.6)
+    rounded_rectangle(s, LENGTH-2*WALL-4, WIDTH-2*WALL-4, 3)
+    feature(lid, s, 2, 'AlignmentLip', reversed=True)
+    for n, start in enumerate(HINGE_STARTS[1::2], 1):
+        s = sketch(lid, f'LidHingeRootProfile{n}', z=lid_bottom)
+        rectangle(s, HINGE_SEGMENT, 11, x=start+HINGE_SEGMENT/2, y=half_w+2.5)
+        feature(lid, s, LID_THICKNESS, f'LidHingeRoot{n}')
+        s = sketch(lid, f'LidKnuckleProfile{n}', x=start)
+        circle(s, 2*HINGE_RADIUS, hinge_y, axis_z)
+        feature(lid, s, HINGE_SEGMENT, f'LidKnuckle{n}')
+    s = sketch(lid, 'LidPinBoreProfile', x=-80)
+    circle(s, PIN_HOLE, hinge_y, axis_z)
+    feature(lid, s, 160, 'LidFilamentBore', cut=True, reversed=True)
+    # The latch clips over this integral axle; no extra latch pin is required.
+    pivot_y, pivot_z = -half_w-1, HEIGHT-5
+    for n, x in enumerate((-14.75, 14.75), 1):
+        s = sketch(lid, f'SnapPivotEarProfile{n}', z=lid_bottom)
+        rounded_rectangle(s, 4.5, 7, 1, x=x, y=-half_w-1.5)
+        feature(lid, s, 9.4, f'SnapPivotEar{n}', reversed=True)
+    s = sketch(lid, 'SnapPivotAxleProfile', x=-13)
+    circle(s, 3, pivot_y, pivot_z)
+    feature(lid, s, 26, 'SnapPivotAxle')
+    save()
+
+    latch = doc.addObject('PartDesign::Body', 'Latch')
+    latch.Label = '03 Central snap-lock — snap-on pivot, lift bottom to open'
+    s = sketch(latch, 'SnapClipProfile', x=-12)
+    circle(s, 7, pivot_y, pivot_z)
+    circle(s, 3+2*SNAP_PIVOT_CLEARANCE, pivot_y, pivot_z)
+    feature(latch, s, 24, 'SnapClipRing')
+    s = sketch(latch, 'SnapClipMouthProfile', x=-13)
+    rectangle(s, 6, SNAP_MOUTH, x=pivot_y+3, y=pivot_z)
+    feature(latch, s, 26, 'SnapClipMouth', cut=True, reversed=True)
+    s = sketch(latch, 'LatchPlateProfile', z=HEIGHT-13)
+    rounded_rectangle(s, 24, 2.5, 1, y=-half_w-4.5)
+    feature(latch, s, 8, 'LatchPlate')
+    s = sketch(latch, 'LatchLowerPlateProfile', z=HEIGHT-22)
+    rounded_rectangle(s, 24, 2.5, 1, y=-half_w-6.75)
+    feature(latch, s, 12, 'LatchLowerPlate')
+    hook_top = HEIGHT-20.6-CATCH_GAP
+    s = sketch(latch, 'SnapHookProfile', x=-12)
+    polygon(s, [(-half_w-8, HEIGHT-22), (-half_w-2, HEIGHT-22),
+                (-half_w-1.8, hook_top-0.4), (-half_w-1.8, hook_top),
+                (-half_w-5.5, hook_top), (-half_w-5.5, HEIGHT-19),
+                (-half_w-8, HEIGHT-19)])
+    feature(latch, s, 24, 'SnapHook')
+    s = sketch(latch, 'FingerLipProfile', z=HEIGHT-22)
+    rounded_rectangle(s, 18, 3, 1, y=-half_w-8.5)
+    feature(latch, s, 2, 'FingerLip')
+
+    # All trays use one local footprint; only their assembly placement differs.
+    short = (LENGTH-2*WALL-4*TRAY_GAP)/3
+    long = 2*short+TRAY_GAP
+    tray_z = FLOOR + TRAY_GAP
+    tray_top = tray_z + TRAY_HEIGHT
+    tool_x = -LENGTH/2+WALL+TRAY_GAP+short/2
+    cable_x = tool_x+short/2+TRAY_GAP+long/2
+    slots = [App.Placement(V(tool_x, 0, 0), App.Rotation()),
+             App.Placement(V(cable_x, -(short+TRAY_GAP)/2, 0), App.Rotation(V(0,0,1),90)),
+             App.Placement(V(cable_x, (short+TRAY_GAP)/2, 0), App.Rotation(V(0,0,1),90))]
+    trays = []
+    for name, placement in zip(('ToolTray', 'CableTrayFront', 'CableTrayBack'), slots):
+        w, h, x, y = short, long, 0, 0
+        tray = doc.addObject('PartDesign::Body', name)
+        tray.Label = name + f' — removable {w:.1f} x {h:.1f} mm'
+        s = sketch(tray, name+'Outline', z=tray_z)
+        rounded_rectangle(s, w, h, 5, x=x, y=y)
+        feature(tray, s, TRAY_HEIGHT, name+'Blank')
+        s = sketch(tray, name+'Interior', z=tray_top)
+        rounded_rectangle(s, w-2*TRAY_WALL, h-2*TRAY_WALL, 2.6, x=x, y=y)
+        feature(tray, s, TRAY_HEIGHT-TRAY_WALL, name+'Cavity', cut=True)
+        dress_edges(tray, 'Chamfer', tray_z, BOTTOM_CHAMFER, name+'BottomChamfer')
+        dress_edges(tray, 'Fillet', tray_top, RIM_FILLET, name+'RimFillet')
+        # Inward pull ledge: underside grows 6 mm inward over 8 mm rise.
+        # 36.9 degrees from vertical, with no horizontal unsupported underside.
+        grip_depth, grip_rise, grip_width = 6.0, 8.0, 24.0
+        inner_y = y+h/2-TRAY_WALL
+        assert math.degrees(math.atan(grip_depth/grip_rise)) < 45
+        s = sketch(tray, name+'PullHandleProfile', x=x-grip_width/2)
+        polygon(s, [(inner_y+0.5, tray_top-11.2),
+                    (inner_y, tray_top-11.2),
+                    (inner_y-grip_depth, tray_top-3.2),
+                    (inner_y-grip_depth, tray_top-1.2),
+                    (inner_y+0.5, tray_top-1.2)])
+        feature(tray, s, grip_width, name+'InwardPullHandle')
+        dress_edges(tray, 'Fillet', tray_top-1.2, 0.5, name+'HandleEdgeFillet')
+        if name == 'ToolTray':
+            cradle_top = tray_z + TRAY_WALL + TOOL_THICKNESS + 1
+            cradle_length = TOOL_LENGTH + 2*TOOL_CLEARANCE + 6
+            # Seat the cradle at the front inner wall, not in the tray's center.
+            tool_y = y-h/2+TRAY_WALL+cradle_length/2
+            s = sketch(tray, 'ToolCradleFootprint', z=tray_z+TRAY_WALL)
+            rectangle(s, w-2*TRAY_WALL, cradle_length, x=x, y=tool_y)
+            feature(tray, s, TOOL_THICKNESS+1, 'ToolCradle')
+            s = sketch(tray, 'ToolSlotProfile', z=cradle_top)
+            rounded_rectangle(s, TOOL_WIDTH+2*TOOL_CLEARANCE,
+                              TOOL_LENGTH+2*TOOL_CLEARANCE, 4, x=x, y=tool_y)
+            feature(tray, s, TOOL_THICKNESS+1, 'ToolSlot', cut=True)
+            s = sketch(tray, 'USBReliefProfile', z=cradle_top)
+            rectangle(s, 9, 17, x=x-17.5, y=tool_y)
+            feature(tray, s, TOOL_THICKNESS+1, 'USBRelief', cut=True)
+            s = sketch(tray, 'ToolFingerProfile', z=cradle_top)
+            circle(s, 17, x=x+17, y=tool_y)
+            feature(tray, s, 7, 'ToolFingerRecess', cut=True)
+        tray.Placement = placement
+        trays.append(tray)
+    organizer_doc = doc
+    doc = App.newDocument('CableClip')
+    doc.Label = 'Cable clip — separate printable accessory'
+    clip = doc.addObject('PartDesign::Body', 'CableClip')
+    clip.Label = f'07 Double cable clip — side entry, cable {CABLE_DIAMETER:g} mm'
+    clip_x = clip_y = clip_z = 0
+    bore = CABLE_DIAMETER+2*CABLE_CLEARANCE
+    spacing = bore+3.8
+    clip_width = spacing+bore+5.2
+    clip_depth = bore+4.6
+    s = sketch(clip, 'CableClipOutline', z=clip_z)
+    rounded_rectangle(s, clip_width, clip_depth, 3.8, x=clip_x, y=clip_y)
+    feature(clip, s, CABLE_CLIP_HEIGHT, 'CableClipBlank')
+    s = sketch(clip, 'CableChannels', z=clip_z+CABLE_CLIP_HEIGHT)
+    for dx in (-spacing/2, spacing/2):
+        circle(s, bore, clip_x+dx, clip_y)
+    feature(clip, s, CABLE_CLIP_HEIGHT, 'CableChannelBores', cut=True)
+    s = sketch(clip, 'CableSideEntries', z=clip_z+CABLE_CLIP_HEIGHT)
+    for dx in (-spacing/2, spacing/2):
+        cx = clip_x+dx
+        # Bell-mouth entries guide the jacket; no connector has to pass through.
+        polygon(s, [(cx-CABLE_MOUTH/2, clip_y), (cx+CABLE_MOUTH/2, clip_y),
+                    (cx+CABLE_MOUTH/2, clip_y+clip_depth/2-1.4),
+                    (cx+CABLE_MOUTH/2+0.7, clip_y+clip_depth/2+0.2),
+                    (cx-CABLE_MOUTH/2-0.7, clip_y+clip_depth/2+0.2),
+                    (cx-CABLE_MOUTH/2, clip_y+clip_depth/2-1.4)])
+    feature(clip, s, CABLE_CLIP_HEIGHT, 'CableEntrySlots', cut=True)
+    assert clip.Tip.Shape.Volume > 300, 'Cable clip walls too thin'
+    clip_doc = doc
+    doc = organizer_doc
+    parts = [base, lid, latch, *trays]
+    print_parts = [*parts, clip]
+
+    # Check closed assembly before moving it for the presentation view.
+    for owner in print_parts:
+        shape = owner.Shape
+        assert shape.isValid() and len(shape.Solids) == 1
+        assert shape.BoundBox.XLength + 2*BRIM <= 180
+        assert shape.BoundBox.YLength + 2*BRIM <= 180
+    from itertools import combinations
+    for a, b in combinations(parts, 2):
+        overlap = a.Shape.common(b.Shape).Volume
+        assert overlap < 0.001, f'{a.Name}/{b.Name}: collision {overlap:g} mm3'
+    # Test each tray in every slot, including a 90-degree change of orientation.
+    for tray in trays:
+        local = tray.Shape.copy()
+        local.Placement = tray.Placement.inverse().multiply(local.Placement)
+        bb = local.optimalBoundingBox(False, False)
+        dims = sorted((bb.XLength, bb.YLength))
+        assert math.isclose(dims[0], short, abs_tol=1e-5)
+        assert math.isclose(dims[1], long, abs_tol=1e-5)
+        for target in slots:
+            moved = local.copy()
+            moved.Placement = target.multiply(moved.Placement)
+            assert moved.common(base.Shape).Volume < 0.001, f'{tray.Name}: slot collision'
+            assert moved.common(lid.Shape).Volume < 0.001, f'{tray.Name}: lid collision'
+    print(f'PASS: all 3 trays fit all 3 slots; common footprint {short:g} x {long:g} mm.')
+    # Two complete closed boxes must stack without hitting hinges or latch.
+    stack_pitch = lid_bottom+LID_THICKNESS
+    for upper in parts:
+        raised = upper.Shape.copy()
+        raised.translate(V(0, 0, stack_pitch))
+        for lower in parts:
+            assert raised.common(lower.Shape).Volume < 0.001, f'Stack collision: {upper.Name}/{lower.Name}'
+    seated = base.Shape.copy()
+    seated.translate(V(0, 0, stack_pitch))
+    assert seated.distToShape(lid.Shape)[0] < 1e-5, 'Stack has no bearing contact'
+    seated.translate(V(STACK_CLEARANCE+0.2, 0, 0))
+    assert seated.common(lid.Shape).Volume > 0.01, 'Stack rib does not resist sliding'
+    print(f'PASS: two closed boxes stack at {stack_pitch:g} mm pitch, {STACK_CLEARANCE:g} mm side clearance.')
+    # Opening passes a small intentional elastic interference at the catch.
+    snap_overlap = []
+    for angle in range(1, 61):
+        moving = latch.Tip.Shape.copy()
+        moving.rotate(V(0, pivot_y, pivot_z), V(1, 0, 0), -angle)
+        assert moving.common(lid.Tip.Shape).Volume < 0.001, f'Latch pivot jam at {angle} degrees'
+        snap_overlap.append(moving.common(base.Tip.Shape).Volume)
+    assert 0.001 < max(snap_overlap) < 12, f'Unexpected snap interference: {max(snap_overlap):g} mm3'
+    assert max(snap_overlap[20:]) < 0.001, 'Latch does not clear the catch'
+    raised_latch = latch.Tip.Shape.copy()
+    raised_latch.translate(V(0, 0, 1))
+    assert raised_latch.common(base.Tip.Shape).Volume > 1, 'Hook does not retain lid'
+    print(f'Snap check: peak elastic overlap {max(snap_overlap):.3f} mm3; physical PLA fit test required.')
+    for s in sketches:
+        assert s.FullyConstrained, s.Name
+        s.Visibility = False
+    doc.recompute()
+    save()
+
+    # Export separate parts in printing orientation; no pin models are needed.
+    for owner in print_parts:
+        rotation = (App.Rotation(V(1, 0, 0), 180) if owner == lid else
+                    App.Rotation(V(0, 1, 0), -90) if owner == latch else App.Rotation())
+        mesh = MeshPart.meshFromShape(Shape=owner.Tip.Shape, LinearDeflection=0.12,
+                                     AngularDeflection=0.2, Relative=False)
+        mesh.transform(App.Placement(V(0, 0, 0), rotation).toMatrix())
+        bb = mesh.BoundBox
+        mesh.translate(-bb.XMin, -bb.YMin, -bb.ZMin)
+        mesh.write(str(OUTPUT / f'organizer_a1mini_{owner.Name.lower()}.stl'))
+    clip_doc.recompute()
+    clip_doc.saveAs(str(OUTPUT / 'cable_clipper.FCStd'))
+    save()
+    print('DONE:', OUTPUT / 'organizer_a1mini.FCStd')
+    print('Print base, lid, snap latch and 3 bento trays separately. PLA: 5 walls, 0.2 mm, 25% infill.')
+    print('Only the back hinge needs a 1.75 mm filament pin, approximately 153 mm long.')
+    print('Snap latch onto integral lid axle. Lift its lower finger lip to release the catch.')
+    print('Test the clip/catch in PLA before a full print. Lid axle may need local support.')
+    print(f'Cable clip: two {bore:g} mm channels, {CABLE_MOUTH:g} mm mouths; print flat without support.')
+    print('Light-duty cable management only: do not force stiff cables into PLA; enlarge the mouth if needed.')
+
+
+if '--check' in sys.argv:
+    check_dimensions()
+    print('PASS: dimensions, A1 Mini + brim envelope, tool clearance and hinge gaps.')
+else:
+    build()

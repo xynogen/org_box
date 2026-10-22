@@ -1,0 +1,101 @@
+"""Run in FreeCAD after organizer_a1mini.FCMacro.
+Copies the actual lock geometry into a small three-part fit-test coupon.
+Print at 100% scale with the same settings intended for the full organizer.
+"""
+from pathlib import Path
+import runpy
+import sys
+import FreeCAD as App
+import Part
+import Sketcher
+import MeshPart
+
+ROOT = Path(__file__).resolve().parents[1]
+old_args = sys.argv[:]
+try:
+    sys.argv = [str(ROOT / 'cad' / 'organizer_a1mini.FCMacro'), '--check']
+    settings = runpy.run_path(sys.argv[0])
+finally:
+    sys.argv = old_args
+H, W = settings['HEIGHT'], settings['WIDTH']
+source = App.openDocument(str(ROOT / 'organizer_a1mini.FCStd'))
+doc = App.newDocument('SnapLockTest')
+doc.Label = 'Snap-lock fit test — actual production geometry'
+V = App.Vector
+
+
+def rectangle(s, w, h, x, y):
+    points = [(x-w/2, y-h/2), (x+w/2, y-h/2),
+              (x+w/2, y+h/2), (x-w/2, y+h/2)]
+    for a, b in zip(points, points[1:]+points[:1]):
+        i = s.addGeometry(Part.LineSegment(V(*a, 0), V(*b, 0)), False)
+        s.addConstraint(Sketcher.Constraint('Block', i))
+
+
+def cut(owner, name, z, depth, profiles):
+    previous = owner.Tip
+    s = doc.addObject('Sketcher::SketchObject', name+'Profile')
+    owner.addObject(s)
+    s.Placement.Base = V(0, 0, z)
+    for profile in profiles:
+        rectangle(s, *profile)
+    doc.recompute()
+    assert s.FullyConstrained
+    f = owner.newObject('PartDesign::Pocket', name)
+    f.Profile, f.Length = s, depth
+    doc.recompute()
+    assert not f.Shape.isNull(), f'{name}: empty shape'
+    assert f.Shape.isValid() and len(f.Shape.Solids) == 1, f'{name}: disconnected coupon'
+    previous.Visibility = False
+    s.Visibility = False
+    return f
+
+
+parts = []
+for name in ('Base', 'Lid', 'Latch'):
+    owner = doc.copyObject(source.getObject(name), True)
+    owner.Placement = App.Placement()  # Restore closed assembly, not the open preview.
+    doc.recompute()
+    if name != 'Latch':
+        # Nested rectangles pocket away everything outside a 44 x 18 mm front strip.
+        cut(owner, name+'TestOutline', H+20, H+40,
+            [(400, 400, 0, 0), (44, 18, 0, -W/2-4)])
+    if name == 'Base':
+        cut(owner, 'RemoveUnusedLowerWall', H-25, H+10, [(400, 400, 0, 0)])
+    for item in owner.Group:
+        if item != owner.Tip and hasattr(item, 'Visibility'):
+            item.Visibility = False
+    owner.Tip.Visibility = True
+    owner.Visibility = True
+    parts.append(owner)
+
+for a, b in ((parts[0], parts[1]), (parts[0], parts[2]), (parts[1], parts[2])):
+    assert a.Shape.common(b.Shape).Volume < 0.001, f'{a.Name}/{b.Name}: collision'
+pivot = V(0, -W/2-1, H-5)
+overlap = []
+for angle in range(1, 61):
+    moving = parts[2].Shape.copy()
+    moving.rotate(pivot, V(1, 0, 0), -angle)
+    assert moving.common(parts[1].Shape).Volume < 0.001
+    overlap.append(moving.common(parts[0].Shape).Volume)
+assert 0.001 < max(overlap) < 12 and max(overlap[20:]) < 0.001
+
+# Use exactly the production print orientations so layer-direction effects are representative.
+for owner, name, rotation in zip(parts, ('base', 'lid', 'latch'),
+                                (App.Rotation(), App.Rotation(V(1, 0, 0), 180),
+                                 App.Rotation(V(0, 1, 0), -90))):
+    mesh = MeshPart.meshFromShape(Shape=owner.Shape, LinearDeflection=0.05,
+                                 AngularDeflection=0.15, Relative=False)
+    mesh.transform(App.Placement(V(), rotation).toMatrix())
+    bb = mesh.BoundBox
+    mesh.translate(-bb.XMin, -bb.YMin, -bb.ZMin)
+    assert mesh.isSolid(), f'{name}: STL not watertight'
+    mesh.write(str(ROOT / f'test_snap_lock_{name}.stl'))
+    print(f'{name}: {bb.XLength:.1f} x {bb.YLength:.1f} x {bb.ZLength:.1f} mm')
+
+doc.recompute()
+doc.saveAs(str(ROOT / 'test_snap_lock.FCStd'))
+print('PASS: coupon uses actual latch, pivot and catch; closed fit and opening checks passed.')
+print('Assemble by hand. Do not force the PLA clip onto its axle. Inspect for whitening or cracks.')
+print('Hold the two wall samples together to match the closed assembly; test release and retention.')
+print('This is a fit/cycle test, not a load-rated strength test.')

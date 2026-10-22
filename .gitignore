@@ -1,0 +1,11 @@
+.pi/
+.playwright-mcp/
+*.FCBak
+*.FCStd1
+*.FCStd2
+__pycache__/
+*.pyc
+# Superseded local output and third-party reference captures.
+/organizer_a1mini_slider.stl
+/snaplock-*.png
+/snaplock-page.yml
