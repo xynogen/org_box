@@ -1,0 +1,151 @@
+"""Parametric SnapLock V3 hinge study: conical end pins, fork sockets and entry slots.
+
+Measured from 150x50x25.3mf. Source and organizer files remain unchanged.
+Run in FreeCAD; edit Parameters for fit calibration. This is a test coupon, not a certified replica.
+"""
+from pathlib import Path
+import math
+
+OUTPUT = Path(__file__).resolve().parents[1] / 'reverse_snaplock_hinge.FCStd'
+
+
+def build():
+    import FreeCAD as App
+    import Sketcher
+    import Part
+
+    V, C = App.Vector, Sketcher.Constraint
+    doc = App.newDocument('Reverse_SnapLock_Hinge')
+    parameters = doc.addObject('Spreadsheet::Sheet', 'Parameters')
+    for row, (name, value) in enumerate([
+        ('BarrelRadius', '4 mm'), ('BarrelLength', '14 mm'),
+        ('RadialClearance', '0.1 mm'),
+        ('PinRootRadius', '2.5 mm'), ('PinTipRadius', '0.5 mm'),
+        ('ForkWidth', '4.8 mm'),
+    ], 1):
+        parameters.set(f'A{row}', name)
+        parameters.set(f'B{row}', value)
+        parameters.setAlias(f'B{row}', name)
+    parameters.setColumnWidth('A', 180)
+    doc.recompute()
+
+    def sketch(owner, name, plane='YZ', offset=0):
+        s = owner.newObject('Sketcher::SketchObject', name)
+        if plane == 'YZ':
+            s.Placement = App.Placement(V(offset, 0, 0),
+                App.Rotation(V(0, 1, 0), V(0, 0, 1), V(1, 0, 0), 'ZXY'))
+        elif plane == 'XZ':
+            s.Placement = App.Placement(V(0, offset, 0),
+                App.Rotation(V(1, 0, 0), V(0, 0, 1), V(0, -1, 0), 'ZXY'))
+        else:
+            s.Placement.Base = V(0, 0, offset)
+        return s
+
+    def coordinate(s, i, endpoint, x, y):
+        for kind, value in [('DistanceX', x), ('DistanceY', y)]:
+            s.addConstraint(C(kind, i, endpoint, value))
+
+    def polygon(s, points):
+        for a, b in zip(points, points[1:]+points[:1]):
+            i = s.addGeometry(Part.LineSegment(V(*a, 0), V(*b, 0)), False)
+            coordinate(s, i, 1, *a)
+            coordinate(s, i, 2, *b)
+
+    def circle(s, radius, expr):
+        i = s.addGeometry(Part.Circle(V(), V(0, 0, 1), radius), False)
+        s.addConstraint(C('Coincident', i, 3, -1, 1))
+        index = s.addConstraint(C('Radius', i, radius))
+        s.setExpression(f'Constraints[{index}]', expr)
+
+    def feature(owner, s, kind, name, length=None, expression=None, reversed=False):
+        doc.recompute()
+        if s.solve() != 0 or not s.FullyConstrained:
+            raise RuntimeError(f'{s.Name}: sketch is not fully constrained')
+        previous = owner.Tip
+        f = owner.newObject('PartDesign::'+kind, name)
+        f.Profile = s
+        if kind in ('Revolution', 'Groove'):
+            f.ReferenceAxis = (s, ['H_Axis'])
+            f.Angle = 360
+        else:
+            f.Length = length
+            f.Reversed = reversed
+            if expression:
+                f.setExpression('Length', expression)
+        doc.recompute()
+        if f.Shape.isNull() or not f.Shape.isValid() or len(f.Shape.Solids) != 1:
+            raise RuntimeError(f'{name}: {f.getStatusString()} — invalid or disconnected solid')
+        if previous:
+            previous.Visibility = False
+        s.Visibility = False
+        return f
+
+    base = doc.addObject('PartDesign::Body', 'HingeBase')
+    base.Label = 'Hinge base — fork sockets, print upright'
+    s = sketch(base, 'BaseWallProfile', offset=-17)
+    polygon(s, [(-8.2, -14), (-6.2, -14), (-6.2, 0), (-8.2, 0)])
+    feature(base, s, 'Pad', 'BaseWall', 34)
+    for side, label in ((-1, 'Left'), (1, 'Right')):
+        x = -12 if side < 0 else 7.2
+        s = sketch(base, label+'RootProfile', offset=x)
+        polygon(s, [(-8.2, -14), (-6.2, -14), (3.564, -1.816),
+                    (0, 0), (-6.2, 0)])
+        feature(base, s, 'Pad', label+'ForkRoot', 4.8, 'Parameters.ForkWidth')
+        s = sketch(base, label+'BarrelProfile', offset=x)
+        circle(s, 4, 'Parameters.BarrelRadius')
+        feature(base, s, 'Pad', label+'ForkBarrel', 4.8, 'Parameters.ForkWidth')
+
+        # Meridional trapezoid produces the measured conical socket, not a through bore.
+        s = sketch(base, label+'SocketProfile', 'XY')
+        points = [(side*7.19, 0), (side*7.19, 2.41), (side*9.1, .5),
+                  (side*9.5, .5), (side*9.5, 0)]
+        polygon(s, points)
+        for line, endpoint, nominal in [(0, 2, 2.41), (1, 1, 2.41),
+                                         (1, 2, .5), (2, 1, .5), (2, 2, .5), (3, 1, .5)]:
+            idx = line*4+(endpoint-1)*2+1
+            s.setExpression(f'Constraints[{idx}]',
+                            f'{nominal-.1} mm + Parameters.RadialClearance')
+        feature(base, s, 'Groove', label+'ConicalSocket')
+
+        # Narrow open-bottom slot is the assembly guide; it must not cut through the outer fork.
+        s = sketch(base, label+'EntrySlotProfile', 'XY', -.45)
+        polygon(s, [(side*7.19, -2.2), (side*7.19, 2.2),
+                    (side*9.5, .1), (side*9.5, -.1)])
+        feature(base, s, 'Pocket', label+'EntrySlot', 16)
+
+    top = doc.addObject('PartDesign::Body', 'HingeTop')
+    top.Label = 'Hinge top — integral conical pins, print inverted'
+    s = sketch(top, 'TopWallProfile', offset=-17)
+    polygon(s, [(-8.2, 0), (-6.2, 0), (-6.2, 14), (-8.2, 14)])
+    feature(top, s, 'Pad', 'TopWall', 34)
+    s = sketch(top, 'TopRootProfile', offset=-7)
+    polygon(s, [(-8.2, 0), (-6.2, 0), (-6.2, 14), (2.65, -2.997), (-4, 0)])
+    feature(top, s, 'Pad', 'TopRoot', 14, 'Parameters.BarrelLength')
+    s = sketch(top, 'TopBarrelProfile', offset=-7)
+    circle(s, 4, 'Parameters.BarrelRadius')
+    feature(top, s, 'Pad', 'TopBarrel', 14, 'Parameters.BarrelLength')
+    for side, label in ((-1, 'Left'), (1, 'Right')):
+        s = sketch(top, label+'PinProfile', 'XY')
+        polygon(s, [(side*6.99, 0), (side*6.99, 2.5),
+                    (side*9, .5), (side*9, 0)])
+        for line, endpoint in [(0, 2), (1, 1)]:
+            s.setExpression(f'Constraints[{line*4+(endpoint-1)*2+1}]', 'Parameters.PinRootRadius')
+        for line, endpoint in [(1, 2), (2, 1)]:
+            s.setExpression(f'Constraints[{line*4+(endpoint-1)*2+1}]', 'Parameters.PinTipRadius')
+        feature(top, s, 'Revolution', label+'ConicalPin')
+
+    doc.recompute()
+    for owner, color in ((base, (.35, .6, .8)), (top, (.45, .75, .5))):
+        owner.Visibility = True
+        for obj in owner.Group:
+            if hasattr(obj, 'Visibility'):
+                obj.Visibility = obj == owner.Tip
+        if App.GuiUp:
+            owner.Tip.ViewObject.ShapeColor = color
+    doc.saveAs(str(OUTPUT))
+    print('BUILT:', OUTPUT)
+    print('Conical snap-assembly hinge study. Physical insertion force and retention are not validated.')
+
+
+if __name__ == '__main__':
+    build()

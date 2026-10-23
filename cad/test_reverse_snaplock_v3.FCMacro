@@ -30,18 +30,63 @@ def main():
             volume = a.Shape.common(b.Shape).Volume
             assert volume < 0.001, f'{a.Name}/{b.Name}: collision {volume:g} mm3'
 
-        # The named flexure parameter must actually move geometry, not just label a cell.
-        slots = doc.getObject('FlexureSlotsProfile')
-        previous = slots.Geometry[0].length()
-        doc.Parameters.set('B5', '0.6 mm')
+        # Upper snap assembly: tapered entrances, side clearance and retained seating land.
+        assert math.isclose(doc.TopCatch.Length.Value, 15, abs_tol=1e-6)
+        assert math.isclose(doc.HookLeadIn.Size.Value, .8, abs_tol=1e-6)
+        assert math.isclose(doc.ReceiverLeadIn.Size.Value, .6, abs_tol=1e-6)
+        assert len(doc.HookLeadIn.Base[1]) == 2, 'Both snap tips need a lead-in'
+        assert doc.HookLeadIn.Shape.Volume < doc.RightHookTip.Shape.Volume
+        assert math.isclose(doc.LeftTipReceiverProfile.Geometry[0].Radius, 2.9, abs_tol=1e-6)
+        assert math.isclose(doc.RightHookTip.Length.Value, 2.2, abs_tol=1e-6)
+        assert 2.2-doc.HookLeadIn.Size.Value > 1, 'Keep a cylindrical seating land'
+        assert math.isclose(doc.Parameters.TopTipClearance.Value, .4, abs_tol=1e-6)
+        assert math.isclose((16-doc.TopCatch.Length.Value)/2, .5, abs_tol=1e-6)
+        print('PASS: both hook tips tapered; socket mouths relieved; 0.5 mm side clearance.')
+
+
+        for side in (-1, 1):
+            assert not bodies[0].Shape.isInside(App.Vector(side*11.75, -3, 10), 1e-6, True), 'Lower flex gap missing'
+            assert bodies[0].Shape.isInside(App.Vector(side*12.25, -3, 10), 1e-6, True), 'Lower pivot arm missing'
+        slots = doc.FlexureSlotsProfile
+        assert math.isclose(slots.Geometry[0].length(), .5, abs_tol=1e-6)
+        gap_cell = doc.Parameters.getCellFromAlias('FlexGap')
+        doc.Parameters.set(gap_cell, '0.6 mm')
         doc.recompute()
-        assert 'Invalid' not in doc.FlexureSlots.State, doc.FlexureSlots.State
-        assert doc.FlexureSlots.Shape.isValid() and len(doc.FlexureSlots.Shape.Solids) == 1
+        assert math.isclose(slots.Geometry[0].length(), .6, abs_tol=1e-6)
+        assert bodies[0].Shape.isValid() and len(bodies[0].Shape.Solids) == 1
+        doc.Parameters.set(gap_cell, '0.5 mm')
+        doc.recompute()
+        print('PASS: original 0.5 mm lower-pivot flex gaps restored.')
+
+        # Upper hook necks must be separate from the rear plate along their free length.
+        for side in (-1, 1):
+            for y in (-3, 0, 2):
+                assert not bodies[0].Shape.isInside(App.Vector(side*10.35, y, 28), 1e-6, True), 'Upper hook still tied to plate'
+                assert bodies[0].Shape.isInside(App.Vector(side*11.35, y, 28), 1e-6, True), 'Upper neck missing'
+                assert bodies[0].Shape.isInside(App.Vector(side*13, y, 28), 1e-6, True), 'Excessive upper relief'
+                assert not bodies[0].Shape.isInside(App.Vector(side*14.8, y, 28), 1e-6, True), 'Upper outer relief missing'
+        initial_volume = bodies[0].Shape.Volume
+        width_cell = doc.Parameters.getCellFromAlias('UpperFlexWidth')
+        doc.Parameters.set(width_cell, '3.8 mm')
+        doc.recompute()
+        assert bodies[0].Shape.Volume > initial_volume+.1, 'UpperFlexWidth does not drive necks'
         for obj in doc.Objects:
             assert 'Invalid' not in obj.State, (obj.Name, obj.State)
-        changed = slots.Geometry[0].length()
-        assert abs(changed-previous) > 0.05, 'FlexGap does not drive slot width'
-        doc.Parameters.set('B5', '0.5 mm')
+        assert bodies[0].Shape.isValid() and len(bodies[0].Shape.Solids) == 1
+        doc.Parameters.set(width_cell, '3.65 mm')
+        doc.recompute()
+        assert math.isclose(doc.Parameters.UpperFlexGap.Value, .5, abs_tol=1e-6)
+        print('PASS: smaller upper reliefs, 0.5 mm isolation gap and 3.65 mm neck; stiffness needs a physical test.')
+
+        # The snap lead-in calibration must change geometry and recompute cleanly.
+        previous = bodies[0].Shape.Volume
+        cell = doc.Parameters.getCellFromAlias('HookLeadIn')
+        doc.Parameters.set(cell, '0.7 mm')
+        doc.recompute()
+        for obj in doc.Objects:
+            assert 'Invalid' not in obj.State, (obj.Name, obj.State)
+        assert bodies[0].Shape.Volume > previous+.01, 'HookLeadIn does not drive geometry'
+        doc.Parameters.set(cell, '0.8 mm')
         doc.recompute()
         assert bodies[0].Shape.isValid()
 
@@ -67,7 +112,7 @@ def main():
         assert all(math.isfinite(d) for d in distances)
         assert max(distances) < 5, 'Reconstruction departed from reference envelope'
         print('PASS: constrained editable sketches, single solids, no closed-assembly collision.')
-        print('PASS: FlexGap parameter changes geometry. Reconstruction error is reported above.')
+        print('PASS: HookLeadIn parameter changes geometry. Reconstruction error is reported above.')
     finally:
         App.closeDocument(doc.Name)
 

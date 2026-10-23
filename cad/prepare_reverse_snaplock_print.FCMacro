@@ -1,5 +1,6 @@
-"""Export the reconstructed latch fit-test as three separate, bed-oriented objects in one 3MF."""
+"""Export only the latch and top receiver for an upper-snap fit test; no base or hinge."""
 from pathlib import Path
+import math
 import FreeCAD as App
 import Mesh
 import MeshPart
@@ -12,7 +13,7 @@ def main():
     plate = App.newDocument('ReverseSnapLockFitTest')
     try:
         for name, x, rotation in [
-            ('Latch', 30, 90), ('BaseCoupon', 72, -90), ('TopCoupon', 116, -90),
+            ('Latch', 30, 90), ('TopCoupon', 72, -90),
         ]:
             shape = source.getObject(name).Shape
             if not shape.isValid() or len(shape.Solids) != 1:
@@ -27,9 +28,17 @@ def main():
             obj = plate.addObject('Mesh::Feature', name)
             obj.Mesh = mesh
             print(name, 'print size:', bb.XLength, bb.YLength, bb.ZLength, 'mm')
-        output = ROOT / 'reverse_snaplock_v3_fit_test.3mf'
+            bed_area = sum(f.Area for f in mesh.Facets if max(abs(p[2]) for p in f.Points) < 1e-5)
+            overhang_area = sum(f.Area for f in mesh.Facets
+                                if f.Normal.z < -math.sqrt(.5)-1e-6
+                                and max(p[2] for p in f.Points) > .21)
+            if bed_area < 20:
+                raise RuntimeError(f'{name}: insufficient flat bed contact')
+            print(f'{name}: bed contact {bed_area:.2f} mm2; >45-degree underside {overhang_area:.2f} mm2')
+        output = ROOT / 'reverse_snaplock_upper_fit_test.3mf'
         Mesh.export(plate.Objects, str(output))
         print('EXPORTED:', output)
+        print('Not print-certified: inspect overhangs and keep supports out of snap gaps and mating surfaces.')
     finally:
         App.closeDocument(plate.Name)
         App.closeDocument(source.Name)

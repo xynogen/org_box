@@ -1,0 +1,59 @@
+"""FreeCAD checks for the reconstructed conical snap hinge; overhangs are reported, not waived."""
+from pathlib import Path
+import math
+import FreeCAD as App
+import MeshPart
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main():
+    doc = App.openDocument(str(ROOT / 'reverse_snaplock_hinge.FCStd'))
+    try:
+        base, top = doc.HingeBase, doc.HingeTop
+        for obj in doc.Objects:
+            assert 'Invalid' not in obj.State, (obj.Name, obj.State)
+            if obj.TypeId == 'Sketcher::SketchObject':
+                assert obj.FullyConstrained and obj.solve() == 0, obj.Name
+                assert all(c.Type != 'Block' for c in obj.Constraints), obj.Name
+        for owner in (base, top):
+            assert owner.Shape.isValid() and len(owner.Shape.Solids) == 1, owner.Name
+        overlaps = []
+        for angle in range(0, 181, 5):
+            moved = top.Shape.copy()
+            moved.rotate(App.Vector(), App.Vector(1, 0, 0), -angle)
+            volume = moved.common(base.Shape).Volume
+            assert volume < .001, f'Hinge collision at {angle} degrees: {volume:g} mm3'
+            overlaps.append(volume)
+        print('PASS: hinge opens 0–180 degrees (5-degree samples), no rigid-body collision.')
+        assert math.isclose(doc.RightForkRoot.Length.Value, 4.8, abs_tol=1e-6)
+        assert math.isclose(doc.RightRootProfile.Placement.Base.x-7, .2, abs_tol=1e-6), 'Axial barrel clearance'
+        # Socket radius must change actual material removal and leave a valid fork.
+        initial = base.Shape.Volume
+        doc.Parameters.set('B3', '0.15 mm')
+        doc.recompute()
+        assert base.Shape.Volume < initial-.01, 'RadialClearance does not drive sockets'
+        for obj in doc.Objects:
+            assert 'Invalid' not in obj.State, (obj.Name, obj.State)
+        doc.Parameters.set('B3', '0.1 mm')
+        doc.recompute()
+        print('PASS: RadialClearance parameter changes socket geometry.')
+        for owner, rotation in ((base, 0), (top, 180)):
+            mesh = MeshPart.meshFromShape(Shape=owner.Shape, LinearDeflection=.03,
+                                          AngularDeflection=.1, Relative=False)
+            mesh.transform(App.Placement(App.Vector(), App.Rotation(App.Vector(1, 0, 0), rotation)).toMatrix())
+            mesh.translate(0, 0, -mesh.BoundBox.ZMin)
+            assert mesh.isSolid(), owner.Name
+            bed_area = sum(f.Area for f in mesh.Facets if max(abs(p[2]) for p in f.Points) < 1e-5)
+            assert bed_area > 20, f'{owner.Name}: insufficient flat bed contact'
+            bad = [f for f in mesh.Facets if f.Normal.z < -math.sqrt(.5)-1e-6
+                   and max(p[2] for p in f.Points) > .21]
+            print(f'OVERHANG: {owner.Name}: {sum(f.Area for f in bad):.2f} mm2 beyond 45 degrees; '
+                  f'bed contact {bed_area:.2f} mm2.')
+        print('NOT PRINT-CERTIFIED: conical pin undersides and socket roofs require slicer review; snap force needs a physical test.')
+    finally:
+        App.closeDocument(doc.Name)
+
+
+if __name__ == '__main__':
+    main()
