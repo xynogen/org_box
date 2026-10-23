@@ -4,7 +4,6 @@ Print at 100% scale with the same settings intended for the full organizer.
 """
 from pathlib import Path
 import runpy
-import sys
 import FreeCAD as App
 import Part
 import Sketcher
@@ -12,12 +11,7 @@ import MeshPart
 
 ROOT = Path(__file__).resolve().parents[1]
 (ROOT / 'stl').mkdir(exist_ok=True)
-old_args = sys.argv[:]
-try:
-    sys.argv = [str(ROOT / 'cad' / 'organizer_a1mini.FCMacro'), '--check']
-    settings = runpy.run_path(sys.argv[0])
-finally:
-    sys.argv = old_args
+settings = runpy.run_path(str(ROOT / 'cad' / 'organizer_a1mini.FCMacro'))
 H, W = settings['HEIGHT'], settings['WIDTH']
 source = App.openDocument(str(ROOT / 'organizer_a1mini.FCStd'))
 doc = App.newDocument('SnapLockTest')
@@ -97,6 +91,6 @@ for owner, name, rotation in zip(parts, ('base', 'lid', 'latch'),
 doc.recompute()
 doc.saveAs(str(ROOT / 'test_snap_lock.FCStd'))
 print('PASS: coupon uses actual latch, pivot and catch; closed fit and opening checks passed.')
-print('Assemble by hand. Do not force the PLA clip onto its axle. Inspect for whitening or cracks.')
+print('Insert a 1.75 mm filament pin through both ears and the latch; retain both ends. Do not force the fit.')
 print('Hold the two wall samples together to match the closed assembly; test release and retention.')
 print('This is a fit/cycle test, not a load-rated strength test.')

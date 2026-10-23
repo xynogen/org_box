@@ -1,0 +1,76 @@
+"""FreeCAD checks and mesh comparison for reverse_snaplock_v3.FCStd.
+
+Run after cad/reverse_snaplock_v3.FCMacro. Source remains read only.
+Reports surface error; this is a reconstruction study, not print-fit certification.
+"""
+from pathlib import Path
+from zipfile import ZipFile
+import json
+import math
+import xml.etree.ElementTree as ET
+import FreeCAD as App
+import Part
+import Mesh
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = Path('/home/xynogen/Downloads/150x50x25.3mf')
+
+
+def main():
+    doc = App.openDocument(str(ROOT / 'reverse_snaplock_v3.FCStd'))
+    try:
+        bodies = [doc.getObject(n) for n in ('Latch', 'BaseCoupon', 'TopCoupon')]
+        for obj in doc.Objects:
+            if obj.TypeId == 'Sketcher::SketchObject':
+                assert obj.FullyConstrained and obj.solve() == 0, obj.Name
+                assert all(c.Type != 'Block' for c in obj.Constraints), obj.Name
+        for obj in bodies:
+            assert obj.Shape.isValid() and len(obj.Shape.Solids) == 1, obj.Name
+        for a, b in ((bodies[0], bodies[1]), (bodies[0], bodies[2]), (bodies[1], bodies[2])):
+            volume = a.Shape.common(b.Shape).Volume
+            assert volume < 0.001, f'{a.Name}/{b.Name}: collision {volume:g} mm3'
+
+        # The named flexure parameter must actually move geometry, not just label a cell.
+        slots = doc.getObject('FlexureSlotsProfile')
+        previous = slots.Geometry[0].length()
+        doc.Parameters.set('B5', '0.6 mm')
+        doc.recompute()
+        assert 'Invalid' not in doc.FlexureSlots.State, doc.FlexureSlots.State
+        assert doc.FlexureSlots.Shape.isValid() and len(doc.FlexureSlots.Shape.Solids) == 1
+        for obj in doc.Objects:
+            assert 'Invalid' not in obj.State, (obj.Name, obj.State)
+        changed = slots.Geometry[0].length()
+        assert abs(changed-previous) > 0.05, 'FlexGap does not drive slot width'
+        doc.Parameters.set('B5', '0.5 mm')
+        doc.recompute()
+        assert bodies[0].Shape.isValid()
+
+        ns = {'m': 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02'}
+        with ZipFile(SOURCE) as archive:
+            xml = ET.fromstring(archive.read('3D/Objects/object_4.model'))
+        vertices = [App.Vector(float(v.attrib['x']), float(v.attrib['y']),
+                               float(v.attrib['z'])+19.98223304748535)
+                    for v in xml.findall('.//m:vertex', ns)]
+        faces = [tuple(int(t.attrib[k]) for k in ('v1', 'v2', 'v3'))
+                 for t in xml.findall('.//m:triangle', ns)]
+        mesh = Mesh.Mesh([tuple(vertices[i] for i in tri) for tri in faces])
+        # Deterministic source vertices; distance to reconstructed BRep, not vertex-to-vertex.
+        distances = [bodies[0].Shape.distToShape(Part.Vertex(p))[0] for p in vertices[::4]]
+        ordered = sorted(distances)
+        report = {'samples': len(distances), 'source_volume_mm3': mesh.Volume,
+                  'reconstructed_volume_mm3': bodies[0].Shape.Volume,
+                  'source_to_cad_mean_mm': sum(distances)/len(distances),
+                  'source_to_cad_p95_mm': ordered[int(.95*(len(ordered)-1))],
+                  'source_to_cad_max_mm': max(distances),
+                  'note': 'One-way sampled error, not symmetric Hausdorff distance or fit certification.'}
+        print('COMPARISON:', json.dumps(report, indent=2), flush=True)
+        assert all(math.isfinite(d) for d in distances)
+        assert max(distances) < 5, 'Reconstruction departed from reference envelope'
+        print('PASS: constrained editable sketches, single solids, no closed-assembly collision.')
+        print('PASS: FlexGap parameter changes geometry. Reconstruction error is reported above.')
+    finally:
+        App.closeDocument(doc.Name)
+
+
+if __name__ == '__main__':
+    main()

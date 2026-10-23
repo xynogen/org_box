@@ -1,0 +1,169 @@
+"""Check organizer dimensions with Python; check generated models with FreeCAD.
+
+python cad/test_organizer_a1mini.FCMacro --check
+FreeCAD: run this macro after organizer_a1mini.FCMacro for geometry checks.
+"""
+from itertools import combinations
+from pathlib import Path
+from types import SimpleNamespace
+import math
+import runpy
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def check_dimensions(d):
+    assert 0 < d.PIN_DIAMETER < d.PIN_HOLE < 2*d.HINGE_RADIUS
+    assert d.WALL >= 3 and d.FLOOR >= 3 and d.HEIGHT >= 40
+    assert d.LENGTH + 2*d.BRIM <= 180
+    assert d.WIDTH + 4*d.HINGE_RADIUS + 2*d.BRIM <= 180
+    assert d.LID_THICKNESS + d.ASSEMBLY_GAP >= d.HINGE_RADIUS
+    assert d.TOOL_WIDTH + 2*d.TOOL_CLEARANCE + 6 < 48
+    assert d.TOOL_LENGTH + 2*d.TOOL_CLEARANCE + 6 < 77
+    assert d.TOOL_THICKNESS + 4 < d.HEIGHT
+    assert d.LENGTH >= 170 and d.WIDTH >= 115.5, 'Modular layout needs at least 170 x 115.5 mm.'
+    assert 0.2 <= d.TRAY_GAP <= 1 and 0.2 <= d.LATCH_PIVOT_CLEARANCE <= 0.5
+    assert d.PIN_DIAMETER < d.LATCH_PIN_HOLE <= 2.4
+    assert d.FLOOR + d.TRAY_GAP + d.TRAY_HEIGHT < d.HEIGHT - 2
+    assert 0 < d.BOTTOM_CHAMFER < min(d.FLOOR, d.TRAY_WALL)/2
+    assert 0 < d.RIM_FILLET < min(d.WALL, d.TRAY_WALL, d.LID_THICKNESS)/2
+    assert 0.2 <= d.STACK_CLEARANCE <= 0.5
+    assert 0 < d.STACK_RIB_HEIGHT < d.STACK_GROOVE_DEPTH <= d.FLOOR-2
+    assert d.STACK_RIB_WIDTH >= 2
+    short = (d.LENGTH - 2*d.WALL - 4*d.TRAY_GAP)/3
+    long = 2*short + d.TRAY_GAP
+    assert math.isclose(d.WIDTH-2*d.WALL, long+2*d.TRAY_GAP, abs_tol=1e-6)
+    assert short > d.TOOL_WIDTH + 2*d.TOOL_CLEARANCE + 12
+    assert long > d.TOOL_LENGTH + 2*d.TOOL_CLEARANCE + 12
+    assert 3 <= d.CABLE_DIAMETER <= 6
+    assert d.CABLE_DIAMETER-0.6 <= d.CABLE_MOUTH < d.CABLE_DIAMETER
+    assert 0.15 <= d.CABLE_CLEARANCE <= 0.4 and 6 <= d.CABLE_CLIP_HEIGHT <= 12
+    assert d.CABLE_DIAMETER+2*d.CABLE_CLEARANCE < 9.2
+    cradle_length = d.TOOL_LENGTH + 2*d.TOOL_CLEARANCE + 6
+    assert long - 2*d.TRAY_WALL - cradle_length > 20
+    assert d.HINGE_SPAN <= d.LENGTH-20 and d.HINGE_GAP >= 0.5
+    knuckles = [(start, start+d.HINGE_SEGMENT) for start in d.HINGE_STARTS]
+    assert all(math.isclose(end-start, d.HINGE_SEGMENT) for start, end in knuckles)
+    assert all(math.isclose(b[0]-a[1], d.HINGE_GAP) for a, b in zip(knuckles, knuckles[1:]))
+    print('PASS: dimensions, A1 Mini + brim envelope, tool clearance and hinge gaps.')
+
+
+def check_models(d, doc, clip_doc):
+    import FreeCAD as App
+
+    V = App.Vector
+    base, lid, latch = (doc.getObject(name) for name in ('Base', 'Lid', 'Latch'))
+    trays = [doc.getObject(name) for name in ('ToolTray', 'CableTrayFront', 'CableTrayBack')]
+    clip = clip_doc.getObject('CableClip')
+    parts = [base, lid, latch, *trays]
+    for model in (doc, clip_doc):
+        for obj in model.Objects:
+            if obj.TypeId == 'Sketcher::SketchObject':
+                assert obj.FullyConstrained, obj.Name
+            elif obj.isDerivedFrom('PartDesign::Feature'):
+                assert not obj.Shape.isNull(), obj.Name
+                assert obj.Shape.isValid() and len(obj.Shape.Solids) == 1, obj.Name
+                if obj.TypeId in ('PartDesign::Chamfer', 'PartDesign::Fillet'):
+                    assert 0 < obj.Shape.Volume < obj.Base[0].Shape.Volume, obj.Name
+    assert math.isclose(doc.getObject('OuterPad').Length.Value, d.HEIGHT, abs_tol=1e-6)
+    assert clip.Tip.Shape.Volume > 300, 'Cable clip walls too thin'
+    for owner in [*parts, clip]:
+        shape = owner.Shape
+        assert shape.isValid() and len(shape.Solids) == 1, owner.Name
+        assert shape.BoundBox.XLength + 2*d.BRIM <= 180, owner.Name
+        assert shape.BoundBox.YLength + 2*d.BRIM <= 180, owner.Name
+    for a, b in combinations(parts, 2):
+        overlap = a.Shape.common(b.Shape).Volume
+        assert overlap < 0.001, f'{a.Name}/{b.Name}: collision {overlap:g} mm3'
+
+    short = (d.LENGTH-2*d.WALL-4*d.TRAY_GAP)/3
+    long = 2*short+d.TRAY_GAP
+    tool_x = -d.LENGTH/2+d.WALL+d.TRAY_GAP+short/2
+    cable_x = tool_x+short/2+d.TRAY_GAP+long/2
+    slots = [App.Placement(V(tool_x, 0, 0), App.Rotation()),
+             App.Placement(V(cable_x, -(short+d.TRAY_GAP)/2, 0), App.Rotation(V(0, 0, 1), 90)),
+             App.Placement(V(cable_x, (short+d.TRAY_GAP)/2, 0), App.Rotation(V(0, 0, 1), 90))]
+    for tray in trays:
+        assert math.isclose(tray.Shape.BoundBox.ZLength, d.TRAY_HEIGHT, abs_tol=1e-5), tray.Name
+        slope = doc.getObject(tray.Name+'PullHandleProfile').Geometry[1]
+        delta = slope.EndPoint - slope.StartPoint
+        assert math.degrees(math.atan2(abs(delta.x), abs(delta.y))) < 45, tray.Name
+        local = tray.Shape.copy()
+        local.Placement = tray.Placement.inverse().multiply(local.Placement)
+        bb = local.optimalBoundingBox(False, False)
+        dims = sorted((bb.XLength, bb.YLength))
+        assert math.isclose(dims[0], short, abs_tol=1e-5)
+        assert math.isclose(dims[1], long, abs_tol=1e-5)
+        for target in slots:
+            moved = local.copy()
+            moved.Placement = target.multiply(moved.Placement)
+            assert moved.common(base.Shape).Volume < 0.001, f'{tray.Name}: slot collision'
+            assert moved.common(lid.Shape).Volume < 0.001, f'{tray.Name}: lid collision'
+    print(f'PASS: all 3 trays fit all 3 slots; common footprint {short:g} x {long:g} mm.')
+
+    stack_pitch = d.HEIGHT+d.ASSEMBLY_GAP+d.LID_THICKNESS
+    for upper in parts:
+        raised = upper.Shape.copy()
+        raised.translate(V(0, 0, stack_pitch))
+        for lower in parts:
+            assert raised.common(lower.Shape).Volume < 0.001, f'Stack collision: {upper.Name}/{lower.Name}'
+    seated = base.Shape.copy()
+    seated.translate(V(0, 0, stack_pitch))
+    assert seated.distToShape(lid.Shape)[0] < 1e-5, 'Stack has no bearing contact'
+    seated.translate(V(d.STACK_CLEARANCE+0.2, 0, 0))
+    assert seated.common(lid.Shape).Volume > 0.01, 'Stack rib does not resist sliding'
+    print(f'PASS: two closed boxes stack at {stack_pitch:g} mm pitch, {d.STACK_CLEARANCE:g} mm side clearance.')
+
+    snap_overlap = []
+    for angle in range(1, 61):
+        moving = latch.Tip.Shape.copy()
+        moving.rotate(V(0, -d.WIDTH/2-1, d.HEIGHT-5), V(1, 0, 0), -angle)
+        assert moving.common(lid.Tip.Shape).Volume < 0.001, f'Latch pivot jam at {angle} degrees'
+        snap_overlap.append(moving.common(base.Tip.Shape).Volume)
+    assert 0.001 < max(snap_overlap) < 12, f'Unexpected snap interference: {max(snap_overlap):g} mm3'
+    assert max(snap_overlap[20:]) < 0.001, 'Latch does not clear the catch'
+    raised_latch = latch.Tip.Shape.copy()
+    raised_latch.translate(V(0, 0, 1))
+    assert raised_latch.common(base.Tip.Shape).Volume > 1, 'Hook does not retain lid'
+    print(f'PASS: snap peak elastic overlap {max(snap_overlap):.3f} mm3; physical PLA fit test required.')
+
+
+def check_print_overhangs(max_angle=45, first_layer=0.2):
+    import Mesh
+
+    threshold = -math.cos(math.radians(max_angle))
+    for path in sorted((ROOT / 'stl').glob('organizer_a1mini_*.stl')):
+        mesh = Mesh.Mesh(str(path))
+        assert mesh.isSolid(), f'{path.name}: STL is not watertight'
+        flagged_area = sum(
+            facet.Area for facet in mesh.Facets
+            if facet.Normal.z < threshold-1e-6
+            and max(point[2] for point in facet.Points) > first_layer+0.01
+        )
+        print(f'OVERHANG SCAN: {path.name}: {flagged_area:.2f} mm2 beyond {max_angle} degrees (bridges included).')
+        if path.stem == 'organizer_a1mini_latch':
+            assert flagged_area < 0.001, 'Latch must print flat without downward overhangs'
+    print('PASS: flat-side latch has no flagged overhang; other parts still require slicer review.')
+
+
+def main():
+    settings = SimpleNamespace(**runpy.run_path(str(ROOT / 'cad' / 'organizer_a1mini.FCMacro')))
+    check_dimensions(settings)
+    if '--check' in sys.argv:
+        return
+    import FreeCAD as App
+
+    opened = []
+    try:
+        for filename in ('organizer_a1mini.FCStd', 'cable_clipper.FCStd'):
+            opened.append(App.openDocument(str(ROOT / filename)))
+        check_models(settings, *opened)
+        check_print_overhangs()
+    finally:
+        for doc in opened:
+            App.closeDocument(doc.Name)
+
+
+if __name__ == '__main__':
+    main()

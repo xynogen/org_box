@@ -1,0 +1,39 @@
+"""Export the reconstructed latch fit-test as three separate, bed-oriented objects in one 3MF."""
+from pathlib import Path
+import FreeCAD as App
+import Mesh
+import MeshPart
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main():
+    source = App.openDocument(str(ROOT / 'reverse_snaplock_v3.FCStd'))
+    plate = App.newDocument('ReverseSnapLockFitTest')
+    try:
+        for name, x, rotation in [
+            ('Latch', 30, 90), ('BaseCoupon', 72, -90), ('TopCoupon', 116, -90),
+        ]:
+            shape = source.getObject(name).Shape
+            if not shape.isValid() or len(shape.Solids) != 1:
+                raise RuntimeError(f'{name}: invalid source solid')
+            mesh = MeshPart.meshFromShape(Shape=shape, LinearDeflection=0.03,
+                                          AngularDeflection=0.1, Relative=False)
+            mesh.transform(App.Placement(App.Vector(), App.Rotation(App.Vector(1, 0, 0), rotation)).toMatrix())
+            bb = mesh.BoundBox
+            mesh.translate(x-bb.XMin, 60-bb.YMin, -bb.ZMin)
+            if not mesh.isSolid() or mesh.BoundBox.ZMin < -1e-5:
+                raise RuntimeError(f'{name}: invalid print mesh')
+            obj = plate.addObject('Mesh::Feature', name)
+            obj.Mesh = mesh
+            print(name, 'print size:', bb.XLength, bb.YLength, bb.ZLength, 'mm')
+        output = ROOT / 'reverse_snaplock_v3_fit_test.3mf'
+        Mesh.export(plate.Objects, str(output))
+        print('EXPORTED:', output)
+    finally:
+        App.closeDocument(plate.Name)
+        App.closeDocument(source.Name)
+
+
+if __name__ == '__main__':
+    main()
