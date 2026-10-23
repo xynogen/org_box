@@ -23,10 +23,14 @@ def build():
         ('Width', '30 mm'), ('Height', '39.964466 mm'), ('Thickness', '10 mm'),
         ('BackThickness', '3 mm'), ('FlexGap', '0.5 mm'),
         ('PivotRadius', '2.5 mm'), ('SocketClearance', '0.2 mm'),
-        ('TipRadius', '2.5 mm'), ('TopTipClearance', '0.4 mm'),
-        ('TopCatchWidth', '15 mm'), ('TopLeadIn', '0.6 mm'),
-        ('HookLeadIn', '0.8 mm'),
-        ('UpperFlexWidth', '3.65 mm'), ('UpperFlexGap', '0.5 mm'),
+        ('TipRadius', '2.5 mm'), ('TopTipClearance', '0.15 mm'),
+        ('TopCatchWidth', '15.3 mm'),
+        ('HookLeadIn', '0.35 mm'),
+        ('SocketRoofRise', '2 mm'),
+        ('TopEntryWidth', '11.6 mm'),
+        ('EntryEdgeChamfer', '0.1 mm'),
+        ('OpeningShoulderRadius', '1 mm'), ('OpeningRimRadius', '0.5 mm'),
+        ('GripChamfer', '0.3 mm'), ('UpperGripChamfer', '0.15 mm'),
     ], 1):
         settings.set(f'A{row}', alias)
         settings.set(f'B{row}', value)
@@ -103,11 +107,24 @@ def build():
     latch = doc.addObject('PartDesign::Body', 'Latch')
     latch.Label = '01 Reconstructed latch — dimensional sketches'
     s = sketch(latch, 'BackOutline', offset=-2)
-    # The rear plate carries the thin flexure roots; recesses grow towards +Y.
-    polygon(s, [(-15, 0), (15, 0), (15, 40), (8, 40), (8, 35),
-                (7.7, 33.5), (6.8, 32.2), (5.5, 31.3), (4, 31),
-                (-4, 31), (-5.5, 31.3), (-6.8, 32.2), (-7.7, 33.5),
-                (-8, 35), (-8, 40), (-15, 40)], 'xz')
+    # Tangent R4 corners form the finger opening, not a polygonal approximation.
+    points = [(-15, 0), (15, 0), (15, 40), (8, 40), (8, 35)]
+    for a, b in zip(points, points[1:]):
+        i = s.addGeometry(Part.LineSegment(V(*a, 0), V(*b, 0)), False)
+        point(s, i, 1, *a, 'xz')
+        point(s, i, 2, *b, 'xz')
+    for side in (1, -1):
+        angles = (-math.pi/2, 0) if side > 0 else (math.pi, 3*math.pi/2)
+        g = s.addGeometry(Part.ArcOfCircle(Part.Circle(V(side*4, 35, 0), V(0, 0, 1), 4), *angles), False)
+        s.addConstraint([C('DistanceX', g, 3, side*4), C('DistanceY', g, 3, 35),
+                         C('Radius', g, 4), C('Angle', g, math.pi/2),
+                         C('DistanceX' if side > 0 else 'DistanceY', g, 1, 4 if side > 0 else 35)])
+    points = [(4, 31), (-4, 31)]
+    for a, b in [(points[0], points[1]), ((-8, 35), (-8, 40)),
+                 ((-8, 40), (-15, 40)), ((-15, 40), (-15, 0))]:
+        i = s.addGeometry(Part.LineSegment(V(*a, 0), V(*b, 0)), False)
+        point(s, i, 1, *a, 'xz')
+        point(s, i, 2, *b, 'xz')
     back = finish(latch, s, 'Pad', 'BackPlate', 3)
     back.setExpression('Length', 'Parameters.BackThickness')
 
@@ -142,75 +159,84 @@ def build():
         polygon(s, [(3, 20.49), (5.01, 20.49), (5.01, 26.02), (3, 22)], 'yz')
         finish(latch, s, 'Pocket', label+'UpperArmLeadIn', 4.27, reversed=True)
 
-    # The underside of the finger opening rises from 28.5 at the back to 31 at the recess.
-    s = sketch(latch, 'OpeningBackSlopeProfile', 'YZ', -4)
-    polygon(s, [(-5.01, 28.49), (-2, 31), (-2, 42), (-5.01, 42)], 'yz')
-    finish(latch, s, 'Pocket', 'OpeningBackSlope', 8, reversed=True)
+    # Keep a continuous rounded floor; the old back-slope pocket left a rectangular notch.
 
-    # Chordal reconstruction of the measured 6 mm corner radii (0.03 mm chord error).
+    # Analytic quarter circles avoid faceted lower corners.
     for side, label in ((-1, 'Left'), (1, 'Right')):
         s = sketch(latch, label+'BottomCornerProfile', offset=5.01)
-        arc = [(side*(9+6*math.cos(a)), 6+6*math.sin(a))
-               for a in [-math.pi/2 + i*math.pi/16 for i in range(9)]]
-        polygon(s, arc + [(side*15, 0)], 'xz')
+        start, end = ((9, 0), (15, 6)) if side > 0 else ((-15, 6), (-9, 0))
+        angles = (-math.pi/2, 0) if side > 0 else (math.pi, 3*math.pi/2)
+        g = s.addGeometry(Part.ArcOfCircle(Part.Circle(V(side*9, 6, 0), V(0, 0, 1), 6), *angles), False)
+        s.addConstraint([C('DistanceX', g, 3, side*9), C('DistanceY', g, 3, 6),
+                         C('Radius', g, 6), C('DistanceX' if side > 0 else 'DistanceY', g, 1, 9 if side > 0 else 6),
+                         C('DistanceY' if side > 0 else 'DistanceX', g, 2, 6 if side > 0 else -9)])
+        points = [end, (side*15, 0), start]
+        for a, b in zip(points, points[1:]):
+            i = s.addGeometry(Part.LineSegment(V(*a, 0), V(*b, 0)), False)
+            point(s, i, 1, *a, 'xz')
+            point(s, i, 2, *b, 'xz')
         finish(latch, s, 'Pocket', label+'BottomCorner', 10.02, reversed=True)
 
-    # Preserve the original lower-pivot flexure slots and transverse reliefs.
-    s = sketch(latch, 'FlexureSlotsProfile', offset=5.01)
-    for side in (-1, 1):
-        polygon(s, [(side*11.5, 6.3), (side*12, 6.3),
-                    (side*12, 21.7), (side*11.5, 21.7)], 'xz')
-        first = (0 if side == -1 else 4)*4
-        for line, endpoint in ((0, 1), (2, 2), (3, 1), (3, 2)):
-            index = first+line*4+(endpoint-1)*2
-            s.setExpression(f'Constraints[{index}]',
-                            f'({side}) * (Parameters.Width * 0.4 - Parameters.FlexGap)')
-    finish(latch, s, 'Pocket', 'FlexureSlots', 10.02, reversed=True)
+    # End the lower slots at the relief underside, not above it (which left a notch).
+    def relief_arc(s, lift=0):
+        # Tangent to the flat arm at Y=-2; the same curve caps the vertical slot.
+        radius = 3.5
+        sweep = math.asin(3.01/radius)
+        center_z = 23.5+lift
+        g = s.addGeometry(Part.ArcOfCircle(Part.Circle(V(-2, center_z, 0), V(0, 0, 1), radius),
+                                          -math.pi/2-sweep, -math.pi/2), False)
+        s.addConstraint([C('DistanceX', g, 3, -2), C('DistanceY', g, 3, center_z),
+                         C('Radius', g, radius), C('Angle', g, sweep), C('DistanceX', g, 1, -5.01)])
+        return (-5.01, center_z-math.sqrt(radius**2-3.01**2)), (-2, 20+lift)
+
+    def relief_lines(s, points):
+        for a, b in zip(points, points[1:]):
+            i = s.addGeometry(Part.LineSegment(V(*a, 0), V(*b, 0)), False)
+            for endpoint, (x, y) in enumerate((a, b), 1):
+                s.addConstraint([C('DistanceX', i, endpoint, x), C('DistanceY', i, endpoint, y)])
+
+    for side, label in ((-1, 'Left'), (1, 'Right')):
+        s = sketch(latch, label+'FlexureSlotProfile', 'YZ', -12 if side < 0 else 11.5)
+        s.setExpression('Placement.Base.x', '-Parameters.Width * 0.4' if side < 0
+                        else 'Parameters.Width * 0.4 - Parameters.FlexGap')
+        back_point, tangent = relief_arc(s)
+        relief_lines(s, [tangent, (3, 20), (5.01, 20), (5.01, 6.3),
+                         (-5.01, 6.3), back_point])
+        slot = finish(latch, s, 'Pocket', label+'FlexureSlot', .5, reversed=True)
+        slot.setExpression('Length', 'Parameters.FlexGap')
     for side, label in ((-1, 'Left'), (1, 'Right')):
         s = sketch(latch, label+'FlexureReliefProfile', 'YZ', -15.01 if side < 0 else 11.5)
-        polygon(s, [(-5.01, 21.69), (-2, 20.59), (0, 20.18), (3, 20),
-                    (3, 20.5), (0, 20.68), (-2, 21.11), (-5.01, 22.24)], 'yz')
+        lower_back, lower_tangent = relief_arc(s)
+        upper_back, upper_tangent = relief_arc(s, .5)
+        relief_lines(s, [lower_tangent, (3, 20), (3, 20.5), upper_tangent])
+        relief_lines(s, [upper_back, lower_back])
         finish(latch, s, 'Pocket', label+'FlexureRelief', 3.51, reversed=True)
 
-    # Free the upper hooks from the rear plate, then narrow their lateral bending necks.
-    # Upper reliefs are separate from the unchanged lower-pivot slots.
-    for side, label in ((-1, 'Left'), (1, 'Right')):
-        s = sketch(latch, label+'UpperFlexIsolationProfile', offset=5.01)
-        polygon(s, [(side*x, z) for x, z in [
-            (10.25, 22.75), (10.75, 22.75), (10.75, 32.25),
-            (8, 35), (7.5, 35), (10.25, 32.25)]], 'xz')
-        for line, endpoint, base_x in [(0, 1, 10.75), (3, 2, 8),
-                                       (4, 1, 8), (4, 2, 10.75),
-                                       (5, 1, 10.75), (5, 2, 10.75)]:
-            s.setExpression(f'Constraints[{line*4+(endpoint-1)*2}]',
-                            f'({side}) * ({base_x} mm - Parameters.UpperFlexGap)')
-        finish(latch, s, 'Pocket', label+'UpperFlexIsolation', 10.02, reversed=True)
-        s = sketch(latch, label+'UpperFlexNeckProfile', offset=5.01)
-        polygon(s, [(side*x, z) for x, z in [
-            (15.01, 22.5), (15.01, 35.5), (14.4, 32), (14.4, 24.5)]], 'xz')
-        for line, endpoint in [(1, 2), (2, 1), (2, 2), (3, 1)]:
-            s.setExpression(f'Constraints[{line*4+(endpoint-1)*2}]',
-                            f'({side}) * (10.75 mm + Parameters.UpperFlexWidth)')
-        finish(latch, s, 'Pocket', label+'UpperFlexNeck', 10.02, reversed=True)
+    # Upper arms stay solid; tune assembly fit with TopCatchWidth instead of flex cuts.
 
     def cap(owner, name, center_y, center_z, base_x, tip_x, radius, kind):
-        # Measured spherical cap: revolve a sampled meridian, not the source triangles.
+        # Revolve an analytic circular meridian for a smooth spherical pin/socket.
         s = sketch(owner, name+'Profile', 'XY', origin=V(0, center_y, center_z))
         center_x = 13.264724735 if base_x > 0 else -13.264724735
         radius_expr = 'Parameters.PivotRadius'+(' + Parameters.SocketClearance' if kind == 'Groove' else '')
-        meridian = []
-        for step in range(17):
-            x = tip_x+(base_x-tip_x)*step/16
-            meridian.append((x, math.sqrt(radius**2-(x-center_x)**2)))
-        polygon(s, meridian+[(base_x, 0), (tip_x, 0)], 'xy')
-        # Radius remains an editable driving expression for every meridian point.
-        for line in range(16):
-            for endpoint, sample in ((1, line), (2, line+1)):
-                x = meridian[sample][0]
-                s.setExpression(f'Constraints[{line*4+(endpoint-1)*2+1}]',
-                                f'sqrt(({radius_expr})^2 - ({x-center_x} mm)^2)')
-        s.setExpression('Constraints[65]', f'sqrt(({radius_expr})^2 - ({base_x-center_x} mm)^2)')
-        s.setExpression('Constraints[75]', f'sqrt(({radius_expr})^2 - ({tip_x-center_x} mm)^2)')
+        arc_start, arc_end = sorted((base_x, tip_x), reverse=True)
+        angles = [math.acos((x-center_x)/radius) for x in (arc_start, arc_end)]
+        g = s.addGeometry(Part.ArcOfCircle(Part.Circle(V(center_x, 0, 0), V(0, 0, 1), radius), *angles), False)
+        s.addConstraint([C('DistanceX', g, 3, center_x), C('DistanceY', g, 3, 0.0),
+                         C('Radius', g, radius), C('DistanceX', g, 1, arc_start),
+                         C('Angle', g, angles[1]-angles[0])])
+        s.setExpression('Constraints[2]', radius_expr)
+        s.setExpression('Constraints[4]',
+                        f'acos(({arc_end-center_x} mm)/({radius_expr})) - acos(({arc_start-center_x} mm)/({radius_expr}))')
+        points = [(arc_end, math.sqrt(radius**2-(arc_end-center_x)**2)),
+                  (arc_end, 0), (arc_start, 0),
+                  (arc_start, math.sqrt(radius**2-(arc_start-center_x)**2))]
+        for a, b in zip(points, points[1:]):
+            i = s.addGeometry(Part.LineSegment(V(*a, 0), V(*b, 0)), False)
+            for endpoint, (x, y) in enumerate((a, b), 1):
+                s.addConstraint(C('DistanceX', i, endpoint, x))
+                dimension(s, C('DistanceY', i, endpoint, y),
+                          f'sqrt(({radius_expr})^2 - {((x-center_x)**2):.15g} mm^2)' if y else None)
         return finish(owner, s, kind, name)
 
     for side, label in ((-1, 'Left'), (1, 'Right')):
@@ -235,6 +261,60 @@ def build():
         raise RuntimeError('HookLeadIn: could not chamfer both snap tips')
     previous.Visibility = False
 
+    # Blend the two inner shoulders, away from pins and the lower flexure slots.
+    previous = latch.Tip
+    edges = [f'Edge{i+1}' for i, edge in enumerate(previous.Shape.Edges)
+             if abs(abs(edge.CenterOfMass.x)-10.75) < 1e-5
+             and abs(edge.CenterOfMass.z-32.25) < 1e-5 and abs(edge.Length-7) < 1e-5]
+    if len(edges) != 2:
+        raise RuntimeError('OpeningShoulders: expected two inner shoulders')
+    rounded = latch.newObject('PartDesign::Fillet', 'OpeningShoulders')
+    rounded.Base = (previous, edges)
+    rounded.Radius = 1
+    rounded.setExpression('Radius', 'Parameters.OpeningShoulderRadius')
+    doc.recompute()
+    if rounded.Shape.isNull() or not rounded.Shape.isValid() or len(rounded.Shape.Solids) != 1:
+        raise RuntimeError('OpeningShoulders: invalid fillet')
+    previous.Visibility = False
+
+    previous = latch.Tip
+    edges = [f'Edge{i+1}' for i, edge in enumerate(previous.Shape.Edges)
+             if abs(edge.CenterOfMass.y+5) < 1e-5
+             and 30.9 < edge.CenterOfMass.z < 33 and abs(edge.CenterOfMass.x) < 7]
+    if len(edges) != 3:
+        raise RuntimeError('OpeningRim: expected continuous U-shaped rim')
+    rounded = latch.newObject('PartDesign::Fillet', 'OpeningRim')
+    rounded.Base = (previous, edges)
+    rounded.Radius = .5
+    rounded.setExpression('Radius', 'Parameters.OpeningRimRadius')
+    doc.recompute()
+    if rounded.Shape.isNull() or not rounded.Shape.isValid() or len(rounded.Shape.Solids) != 1:
+        raise RuntimeError('OpeningRim: invalid fillet')
+    previous.Visibility = False
+
+    # Break only the exposed back-face perimeter, not pin or slot edges.
+    for name, size, lower in [('GripChamfer', .3, True), ('UpperGripChamfer', .15, False)]:
+        previous = latch.Tip
+        edges = []
+        for i, edge in enumerate(previous.Shape.Edges):
+            bb, center = edge.BoundBox, edge.CenterOfMass
+            on_back = abs(bb.YMin+5) < 1e-5 and abs(bb.YMax+5) < 1e-5
+            selected = center.z < 6.1 if lower else (
+                (abs(abs(center.x)-15) < 1e-5 and center.z > 22.3)
+                or (center.z > 33.4 and abs(center.x) > 10))
+            if on_back and selected:
+                edges.append(f'Edge{i+1}')
+        if len(edges) != (3 if lower else 4):
+            raise RuntimeError(f'{name}: unexpected grip perimeter')
+        softened = latch.newObject('PartDesign::Chamfer', name)
+        softened.Base = (previous, edges)
+        softened.Size = size
+        softened.setExpression('Size', f'Parameters.{name}')
+        doc.recompute()
+        if softened.Shape.isNull() or not softened.Shape.isValid() or len(softened.Shape.Solids) != 1:
+            raise RuntimeError(f'{name}: invalid grip chamfer')
+        previous.Visibility = False
+
     base = doc.addObject('PartDesign::Body', 'BaseCoupon')
     base.Label = '02 Base mounting coupon — twin spherical sockets'
     s = sketch(base, 'BaseWallProfile', 'YZ', -18)
@@ -255,6 +335,11 @@ def build():
     s.setExpression('Placement.Base.x', '-Parameters.TopCatchWidth / 2')
     polygon(s, [(5, 26), (5, 30), (2.5, 29.7), (0, 30.1), (-2, 31.15),
                 (-2, 37), (5, 44), (7, 45), (7, 37), (5, 35)], 'yz')
+    # Raise the sloping roof outward; keep the pin centre, bore and mating width unchanged.
+    for line, endpoint, original_z in [(4, 2, 37), (5, 1, 37), (5, 2, 44),
+                                       (6, 1, 44), (6, 2, 45), (7, 1, 45)]:
+        s.setExpression(f'Constraints[{line*4+(endpoint-1)*2+1}]',
+                        f'{original_z} mm + Parameters.SocketRoofRise')
     catch = finish(top, s, 'Pad', 'TopCatch', 15)
     catch.setExpression('Length', 'Parameters.TopCatchWidth')
     for side, label in ((-1, 'Left'), (1, 'Right')):
@@ -263,19 +348,41 @@ def build():
                         else 'Parameters.TopCatchWidth/2 - 3 mm')
         circle(s, (2.5, 37.5), 2.9, 'yz', 'Parameters.TipRadius + Parameters.TopTipClearance')
         finish(top, s, 'Pocket', label+'TipReceiver', 3.01, reversed=True)
-    # Relieve the socket mouths instead of forcing a sharp rim over the hook tips.
-    previous = top.Tip
-    edges = [f'Edge{i+1}' for i, edge in enumerate(previous.Shape.Edges)
-             if isinstance(edge.Curve, Part.Circle)
-             and abs(abs(edge.CenterOfMass.x)-7.5) < 1e-5]
-    lead_in = top.newObject('PartDesign::Chamfer', 'ReceiverLeadIn')
-    lead_in.Base = (previous, edges)
-    lead_in.Size = 0.6
-    lead_in.setExpression('Size', 'Parameters.TopLeadIn')
-    doc.recompute()
-    if not edges or lead_in.Shape.isNull() or not lead_in.Shape.isValid():
-        raise RuntimeError('ReceiverLeadIn: could not chamfer the socket mouths')
-    previous.Visibility = False
+    # Taper the free nose toward the sockets, not the seated socket walls.
+    for side, label in ((-1, 'Left'), (1, 'Right')):
+        s = sketch(top, label+'EntryRampProfile', 'XY', 48)
+        polygon(s, [(side*x, y) for x, y in [
+            (5.8, -2.01), (7.65, -.3), (8.65, -.3), (8.65, -3), (5.8, -3)]], 'xy')
+        for line, endpoint, value in [(0, 1, 'Parameters.TopEntryWidth/2'),
+                                      (0, 2, 'Parameters.TopCatchWidth/2'),
+                                      (1, 1, 'Parameters.TopCatchWidth/2'),
+                                      (1, 2, 'Parameters.TopCatchWidth/2 + 1 mm'),
+                                      (2, 1, 'Parameters.TopCatchWidth/2 + 1 mm'),
+                                      (2, 2, 'Parameters.TopCatchWidth/2 + 1 mm'),
+                                      (3, 1, 'Parameters.TopCatchWidth/2 + 1 mm'),
+                                      (3, 2, 'Parameters.TopEntryWidth/2'),
+                                      (4, 1, 'Parameters.TopEntryWidth/2'),
+                                      (4, 2, 'Parameters.TopEntryWidth/2')]:
+            s.setExpression(f'Constraints[{line*4+(endpoint-1)*2}]', f'({side}) * ({value})')
+        finish(top, s, 'Pocket', label+'EntryRamp', 30)
+    # Sketch the corner breaks so changing roof/width does not lose dress-up edge links.
+    for side, label in ((-1, 'Left'), (1, 'Right')):
+        s = sketch(top, label+'EntryCornerProfile', 'XY', 48)
+        polygon(s, [(side*7.65, -.3), (side*7.55, -.3924324324),
+                    (side*7.65, -.2)], 'xy')
+        for line, endpoint in [(0, 1), (1, 2), (2, 1), (2, 2)]:
+            s.setExpression(f'Constraints[{line*4+(endpoint-1)*2}]',
+                            f'({side}) * Parameters.TopCatchWidth/2')
+        for line, endpoint in [(0, 2), (1, 1)]:
+            s.setExpression(f'Constraints[{line*4+(endpoint-1)*2}]',
+                            f'({side}) * (Parameters.TopCatchWidth/2 - Parameters.EntryEdgeChamfer)')
+            s.setExpression(f'Constraints[{line*4+(endpoint-1)*2+1}]',
+                            '-0.3 mm - Parameters.EntryEdgeChamfer * 1.71 mm / ((Parameters.TopCatchWidth - Parameters.TopEntryWidth)/2)')
+        for line, endpoint in [(1, 2), (2, 1)]:
+            s.setExpression(f'Constraints[{line*4+(endpoint-1)*2+1}]',
+                            '-0.3 mm + Parameters.EntryEdgeChamfer')
+        finish(top, s, 'Pocket', label+'EntryCorner', 30)
+    # Keep square socket mouths for retention; the pin tips provide the insertion lead-in.
 
     for owner, color in [(latch, (.88, .65, .3)), (base, (.35, .6, .8)), (top, (.45, .75, .5))]:
         for obj in owner.Group:
