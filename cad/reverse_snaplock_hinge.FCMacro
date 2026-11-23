@@ -6,7 +6,7 @@ Run in FreeCAD; edit Parameters for fit calibration. This is a test coupon, not 
 from pathlib import Path
 import math
 
-OUTPUT = Path(__file__).resolve().parents[1] / 'reverse_snaplock_hinge.FCStd'
+OUTPUT = Path(__file__).resolve().parents[1] / 'out' / 'reverse_snaplock_hinge.FCStd'
 
 
 def build():

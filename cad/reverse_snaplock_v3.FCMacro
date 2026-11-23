@@ -7,7 +7,7 @@ Output: reverse_snaplock_v3.FCStd. Edit the Parameters spreadsheet, then recompu
 from pathlib import Path
 import math
 
-OUTPUT = Path(__file__).resolve().parents[1] / 'reverse_snaplock_v3.FCStd'
+OUTPUT = Path(__file__).resolve().parents[1] / 'out' / 'reverse_snaplock_v3.FCStd'
 
 
 def build():

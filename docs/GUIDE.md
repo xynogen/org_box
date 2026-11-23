@@ -2,7 +2,7 @@
 
 ## 1. Cetak test kunci
 
-Gunakan [sampel badan](../stl/test_snap_lock_base.stl), [sampel poros](../stl/test_snap_lock_lid.stl), dan [kait](../stl/test_snap_lock_latch.stl) di folder `stl/`. Semua memakai geometri yang sama dengan produk, dipotong menjadi sampel kecil. Cetak **100%**, bukan scale-to-fit.
+Gunakan sampel badan (`test_snap_lock_base.stl`), sampel poros (`test_snap_lock_lid.stl`), dan kait (`test_snap_lock_latch.stl`) dari [Releases](https://github.com/xynogen/org_box/releases/latest). Semua memakai geometri yang sama dengan produk, dipotong menjadi sampel kecil. Cetak **100%**, bukan scale-to-fit.
 
 Pengaturan awal untuk PLA dan nozzle 0,4 mm:
 
@@ -59,30 +59,31 @@ Cable clip terpisah memegang dua ruas kabel nominal Ø5 mm dengan jalur Ø5,4 mm
 ## 5. Struktur kode dan regenerasi
 
 ```text
+build.FCMacro                 # Entry point: model -> test kunci -> semua cek
 cad/
-  organizer_a1mini.FCMacro    # Model, validasi geometri, ekspor FCStd/STL
+  organizer_a1mini.FCMacro    # Model dan ekspor FCStd/STL
   test_snap_lock.FCMacro     # Sampel test dari geometri produksi
+  test_organizer_a1mini.FCMacro  # Cek dimensi, tabrakan, tray, stacking, kait, overhang
+  reverse_snaplock_*.FCMacro # Studi rekonstruksi; bukan bagian build produk
 scripts/
   render_docs.FCMacro        # Render dokumentasi saja; tidak menyimpan perubahan CAD
 docs/
   GUIDE.md
   images/                    # Gambar hasil render
-stl/                        # Semua STL siap cetak
-*.FCStd                     # Model CAD di root
+out/                         # FCStd dan STL hasil build (tidak masuk git)
 ```
 
-Urutan di FreeCAD GUI:
+Urutan:
 
-1. Jalankan `cad/organizer_a1mini.FCMacro`.
-2. Jalankan `cad/test_snap_lock.FCMacro`.
-3. Bila ingin memperbarui README, jalankan `scripts/render_docs.FCMacro`.
+1. Jalankan `build.FCMacro` (GUI atau `FreeCADCmd`).
+2. Bila ingin memperbarui README, jalankan `scripts/render_docs.FCMacro` di FreeCAD GUI.
 
-Model yang dihasilkan disimpan dalam posisi tertutup. Skrip dokumentasi hanya membuka salinan untuk gambar tutup terbuka/tertutup; kode CAD tidak bergantung pada kode dokumentasi. Output FCStd masuk root proyek, STL masuk `stl/`, bukan current working directory. Simpan edit manual dengan nama lain sebelum regenerasi.
+Model yang dihasilkan disimpan dalam posisi tertutup. Skrip dokumentasi hanya membuka salinan untuk gambar tutup terbuka/tertutup; kode CAD tidak bergantung pada kode dokumentasi. Semua output masuk `out/`, bukan current working directory. Simpan edit manual dengan nama lain sebelum regenerasi.
 
 Cek sederhana tanpa FreeCAD:
 
 ```sh
-python cad/organizer_a1mini.FCMacro --check
+python3 build.FCMacro --check
 ```
 
 Makro generator juga menjalankan assert untuk solid, benturan rakitan, semua kombinasi tray/slot, stacking, dan gerak snap-lock. Regenerasi diperlukan untuk menguji geometri setelah perubahan parameter. Ukuran panjang/lebar saling terikat oleh pola tiga tray identik; assert akan menolak kombinasi yang tidak modular.

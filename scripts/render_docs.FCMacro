@@ -16,7 +16,7 @@ previous_name = App.ActiveDocument.Name if App.ActiveDocument else None
 # Use a fresh document so manual edits in an open document are not rendered or changed.
 temporary = tempfile.TemporaryDirectory(prefix='org-box-render-')
 source = Path(temporary.name) / 'render.FCStd'
-shutil.copy2(ROOT / 'organizer_a1mini.FCStd', source)
+shutil.copy2(ROOT / 'out' / 'organizer_a1mini.FCStd', source)
 doc = App.openDocument(str(source))
 placements = {name: doc.getObject(name).Placement for name in ('Lid', 'Latch')}
 try:

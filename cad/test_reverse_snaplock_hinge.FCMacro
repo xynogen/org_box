@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    doc = App.openDocument(str(ROOT / 'reverse_snaplock_hinge.FCStd'))
+    doc = App.openDocument(str(ROOT / 'out' / 'reverse_snaplock_hinge.FCStd'))
     try:
         base, top = doc.HingeBase, doc.HingeTop
         for obj in doc.Objects:

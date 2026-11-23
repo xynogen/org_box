@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    source = App.openDocument(str(ROOT / 'reverse_snaplock_v3.FCStd'))
+    source = App.openDocument(str(ROOT / 'out' / 'reverse_snaplock_v3.FCStd'))
     plate = App.newDocument('ReverseSnapLockFitTest')
     try:
         for name, x, rotation in [
@@ -35,7 +35,7 @@ def main():
             if bed_area < 20:
                 raise RuntimeError(f'{name}: insufficient flat bed contact')
             print(f'{name}: bed contact {bed_area:.2f} mm2; >45-degree underside {overhang_area:.2f} mm2')
-        output = ROOT / 'reverse_snaplock_top_15_3_fit_test.3mf'
+        output = ROOT / 'out' / 'reverse_snaplock_top_15_3_fit_test.3mf'
         Mesh.export(plate.Objects, str(output))
         print('EXPORTED:', output)
         print('Not print-certified: inspect overhangs and keep supports out of snap gaps and mating surfaces.')

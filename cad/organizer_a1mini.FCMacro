@@ -1,7 +1,7 @@
 """Geometry generation only. Run with FreeCAD: Macro > Macros > Execute.
 Edit the dimensions below, then rerun. Each run creates a new document.
-Checks: python cad/test_organizer_a1mini.FCMacro --check (dimensions only).
-Outputs: root-level FCStd models and print-oriented files in stl/.
+Build and check everything from the repo root: build.FCMacro.
+Outputs: FCStd models and print-oriented STL files in out/.
 """
 from pathlib import Path
 import math
@@ -41,7 +41,7 @@ STACK_CLEARANCE = 0.35  # Per side between the locating rib and bottom groove.
 STACK_RIB_HEIGHT = 0.8
 STACK_GROOVE_DEPTH = 1.0
 STACK_RIB_WIDTH = 2.0
-OUTPUT = Path(__file__).resolve().parents[1]
+OUTPUT = Path(__file__).resolve().parents[1] / 'out'
 
 
 def build():
@@ -341,7 +341,7 @@ def build():
     doc.recompute()
 
     # Export separate parts in printing orientation; no pin models are needed.
-    (OUTPUT / 'stl').mkdir(exist_ok=True)
+    OUTPUT.mkdir(exist_ok=True)
     for owner in print_parts:
         rotation = (App.Rotation(V(1, 0, 0), 180) if owner == lid else
                     App.Rotation(V(0, 1, 0), -90) if owner == latch else App.Rotation())
@@ -350,7 +350,7 @@ def build():
         mesh.transform(App.Placement(V(0, 0, 0), rotation).toMatrix())
         bb = mesh.BoundBox
         mesh.translate(-bb.XMin, -bb.YMin, -bb.ZMin)
-        mesh.write(str(OUTPUT / 'stl' / f'organizer_a1mini_{owner.Name.lower()}.stl'))
+        mesh.write(str(OUTPUT / f'organizer_a1mini_{owner.Name.lower()}.stl'))
     clip_doc.recompute()
     clip_doc.saveAs(str(OUTPUT / 'cable_clipper.FCStd'))
     doc.saveAs(str(OUTPUT / 'organizer_a1mini.FCStd'))

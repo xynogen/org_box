@@ -133,7 +133,7 @@ def check_print_overhangs(max_angle=45, first_layer=0.2):
     import Mesh
 
     threshold = -math.cos(math.radians(max_angle))
-    for path in sorted((ROOT / 'stl').glob('organizer_a1mini_*.stl')):
+    for path in sorted((ROOT / 'out').glob('organizer_a1mini_*.stl')):
         mesh = Mesh.Mesh(str(path))
         assert mesh.isSolid(), f'{path.name}: STL is not watertight'
         flagged_area = sum(
@@ -157,7 +157,7 @@ def main():
     opened = []
     try:
         for filename in ('organizer_a1mini.FCStd', 'cable_clipper.FCStd'):
-            opened.append(App.openDocument(str(ROOT / filename)))
+            opened.append(App.openDocument(str(ROOT / 'out' / filename)))
         check_models(settings, *opened)
         check_print_overhangs()
     finally:

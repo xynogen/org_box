@@ -1,0 +1,39 @@
+"""org_box: build every printable part, then check it. Outputs go to out/.
+
+Run: FreeCADCmd "$PWD/build.FCMacro"   or   python3 build.FCMacro --check
+
+Steps: cad/organizer_a1mini (box, lid, latch, 3 trays, cable clip) ->
+cad/test_snap_lock (lock fit-test coupon cut from the real geometry) ->
+cad/test_organizer_a1mini (solids, collisions, tray swap, stacking, latch swing, STL scan).
+The reverse_snaplock_* studies are not part of the product build.
+"""
+import runpy
+import sys
+from pathlib import Path
+
+CAD = Path(__file__).resolve().parent / "cad"
+
+
+def run(name):
+    runpy.run_path(str(CAD / name), run_name="__main__")
+
+
+def build():
+    import FreeCAD as App
+
+    for step in ("organizer_a1mini.FCMacro", "test_snap_lock.FCMacro", "test_organizer_a1mini.FCMacro"):
+        before = set(App.listDocuments())
+        try:
+            run(step)
+        finally:
+            # Close only the documents this step opened; the next step reopens the saved files.
+            for name in set(App.listDocuments()) - before:
+                App.closeDocument(name)
+    print("PASS: org_box build, out/*.stl and out/*.FCStd written and checked")
+
+
+if __name__ == "__main__":
+    if "--check" in sys.argv:
+        run("test_organizer_a1mini.FCMacro")  # Dimension asserts only; no FreeCAD needed.
+    else:
+        build()

@@ -17,7 +17,7 @@ SOURCE = Path('/home/xynogen/Downloads/150x50x25.3mf')
 
 
 def main():
-    doc = App.openDocument(str(ROOT / 'reverse_snaplock_v3.FCStd'))
+    doc = App.openDocument(str(ROOT / 'out' / 'reverse_snaplock_v3.FCStd'))
     try:
         bodies = [doc.getObject(n) for n in ('Latch', 'BaseCoupon', 'TopCoupon')]
         for obj in doc.Objects:

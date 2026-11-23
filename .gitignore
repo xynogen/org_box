@@ -1,11 +1,16 @@
-.pi/
-.playwright-mcp/
-*.FCBak
-*.FCStd1
-*.FCStd2
 __pycache__/
 *.pyc
-# Superseded local output and third-party reference captures.
-/organizer_a1mini_slider.stl
+*.FCBak
+*.FCStd
+*.FCStd1
+*.FCStd2
+*.stl
+*.step
+*.3mf
+out/
+# Local agent and tool state, not project configuration.
+.pi/
+.playwright-mcp/
+# Third-party reference captures, not redistributable.
 /snaplock-*.png
 /snaplock-page.yml
